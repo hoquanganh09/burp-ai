@@ -36,6 +36,7 @@ class MainTab(
     val root: JComponent = JPanel(BorderLayout())
     private lateinit var settingsPanel: SettingsPanel
     private lateinit var chatPanel: ChatPanel
+    private lateinit var bottomTabsPanel: BottomTabsPanel
 
     private val mcpToggle = ToggleSwitch()
     private val passiveToggle = ToggleSwitch()
@@ -61,6 +62,7 @@ class MainTab(
 
     init {
         settingsPanel = SettingsPanel(api, backends, supervisor, audit, mcpSupervisor, passiveAiScanner, activeAiScanner)
+        bottomTabsPanel = BottomTabsPanel(settingsPanel)
         chatPanel = ChatPanel(
             api = api,
             supervisor = supervisor,
@@ -171,23 +173,26 @@ class MainTab(
         actions.add(javax.swing.Box.createRigidArea(Dimension(24, 0)))
         actions.add(clientGroup)
 
-        val innerSplit = javax.swing.JSplitPane(
-            javax.swing.JSplitPane.HORIZONTAL_SPLIT,
-            chatPanel.root,
-            settingsPanel.panelComponent()
-        )
-        innerSplit.resizeWeight = 0.75
-        innerSplit.setDividerLocation(0.75)
-        innerSplit.border = EmptyBorder(0, 0, 0, 0)
-
-        val center = javax.swing.JSplitPane(
+        val mainContent = javax.swing.JSplitPane(
             javax.swing.JSplitPane.HORIZONTAL_SPLIT,
             chatPanel.sessionsComponent(),
-            innerSplit
+            chatPanel.root
         )
-        center.resizeWeight = 0.2
-        center.setDividerLocation(0.2)
+        mainContent.resizeWeight = 0.2
+        mainContent.setDividerLocation(0.2)
+        mainContent.border = EmptyBorder(0, 0, 0, 0)
+
+        val center = javax.swing.JSplitPane(
+            javax.swing.JSplitPane.VERTICAL_SPLIT,
+            mainContent,
+            bottomTabsPanel.root
+        )
+        center.resizeWeight = 0.7
+        center.setDividerLocation(0.7)
         center.border = EmptyBorder(0, 0, 0, 0)
+        center.isOneTouchExpandable = true
+        bottomTabsPanel.root.minimumSize = java.awt.Dimension(0, 90)
+        bottomTabsPanel.root.preferredSize = java.awt.Dimension(0, 240)
 
         top.add(titleBox, BorderLayout.CENTER)
         top.add(actions, BorderLayout.EAST)

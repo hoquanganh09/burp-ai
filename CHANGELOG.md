@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] - 2026-01-30
+
+### Added
+
+- Configurable request timeout for Ollama backend (30-3600 seconds, default 120s). Fixes timeouts with larger/slower models like `qwen3-coder:30b` in non-streaming mode.
+- Bottom settings panel with native-style tabs for configuration sections.
+
+### Changed
+
+- Settings UI moved from right sidebar to a bottom split panel with a larger main workspace.
+- Each settings category now has its own dedicated tab (AI Backend, AI Passive Scanner, AI Active Scanner, MCP Server, Burp Integration, Prompt Templates, Privacy & Logging, Help).
+- Settings sections are always visible per tab (no accordion collapse).
+- Burp Integration tool list uses a wider multi-column layout to better utilize horizontal space.
+- Prompt templates use a full-width single-field-per-row layout.
+- Bottom settings panel now collapses to a smaller minimum height when not in use.
+
 ## [0.1.2] - 2026-01-30
 
 ### Added

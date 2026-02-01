@@ -9,7 +9,6 @@ import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
-import com.six2dez.burp.aiagent.ui.components.AccordionPanel
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigState
@@ -43,9 +42,15 @@ class SettingsPanel(
     var onMcpEnabledChanged: ((Boolean) -> Unit)? = null
     var onPassiveAiEnabledChanged: ((Boolean) -> Unit)? = null
     var onActiveAiEnabledChanged: ((Boolean) -> Unit)? = null
-
-    private val panel = JPanel(BorderLayout())
-    private val content = JPanel()
+    private var dialogParent: JComponent? = null
+    private lateinit var generalTab: JComponent
+    private lateinit var passiveScannerTab: JComponent
+    private lateinit var activeScannerTab: JComponent
+    private lateinit var mcpTab: JComponent
+    private lateinit var burpIntegrationTab: JComponent
+    private lateinit var promptsTab: JComponent
+    private lateinit var privacyTab: JComponent
+    private lateinit var helpTab: JComponent
 
     private val backendConfigPanel = BackendConfigPanel(
         BackendConfigState(
@@ -208,10 +213,7 @@ class SettingsPanel(
 
     init {
         refreshProfileOptions()
-        panel.background = UiTheme.Colors.surface
-        content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
-        content.border = EmptyBorder(8, 12, 12, 12)
-        content.background = UiTheme.Colors.surface
+        val tabContentInsets = EmptyBorder(8, 12, 12, 12)
 
         applyFieldStyle(mcpHost)
         applyFieldStyle(mcpKeystorePath)
@@ -308,11 +310,10 @@ class SettingsPanel(
         val backendBody = JPanel(BorderLayout()).apply {
             background = UiTheme.Colors.surface
         }
-        val backendSection = AccordionPanel(
-            title = "🤖 AI Backend",
+        val backendSection = sectionPanel(
+            title = "AI Backend",
             subtitle = "Select the default backend and configure its connection.",
-            content = backendBody,
-            initiallyExpanded = false
+            content = backendBody
         ).apply {
             backendBody.add(backendConfigPanel, BorderLayout.CENTER)
             val profileGrid = formGrid()
@@ -329,11 +330,10 @@ class SettingsPanel(
         val privacyBody = JPanel(BorderLayout()).apply {
             background = UiTheme.Colors.surface
         }
-        val privacySection = AccordionPanel(
-            title = "🔒 Privacy & Logging",
+        val privacySection = sectionPanel(
+            title = "Privacy & Logging",
             subtitle = "Controls redaction and stable ordering of context.",
-            content = privacyBody,
-            initiallyExpanded = false
+            content = privacyBody
         ).apply {
             val grid = formGrid()
             addRowFull(grid, "Privacy mode", privacyMode)
@@ -355,27 +355,19 @@ class SettingsPanel(
             background = UiTheme.Colors.surface
         }
         burpIntegrationBody.add(buildMcpToolsPanel(), BorderLayout.CENTER)
-        val burpIntegrationSection = AccordionPanel(
-            title = "🔌 Burp Integration",
+        val burpIntegrationSection = sectionPanel(
+            title = "Burp Integration",
             subtitle = "Controls how Burp MCP tools are exposed.",
-            content = burpIntegrationBody,
-            initiallyExpanded = false
+            content = burpIntegrationBody
         )
-        content.add(backendSection)
-        content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
-        content.add(passiveAiScannerSection())  // AI Scanner as main feature after backend
-        content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
-        content.add(activeAiScannerSection())   // Active Scanner after passive
-        content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
-        content.add(mcpSection())
-        content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
-        content.add(privacySection)
-        content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
-        content.add(burpIntegrationSection)
-        content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
-        content.add(promptSection())
-        content.add(Box.createRigidArea(java.awt.Dimension(0, 6)))
-        content.add(helpSection())
+        generalTab = buildTabPanel(listOf(backendSection), tabContentInsets)
+        passiveScannerTab = buildTabPanel(listOf(passiveAiScannerSection()), tabContentInsets)
+        mcpTab = buildTabPanel(listOf(mcpSection()), tabContentInsets)
+        promptsTab = buildTabPanel(listOf(promptSection()), tabContentInsets)
+        privacyTab = buildTabPanel(listOf(privacySection), tabContentInsets)
+        activeScannerTab = buildTabPanel(listOf(activeAiScannerSection()), tabContentInsets)
+        burpIntegrationTab = buildTabPanel(listOf(burpIntegrationSection), tabContentInsets)
+        helpTab = buildTabPanel(listOf(helpSection()), tabContentInsets)
 
         preferredBackend.addActionListener {
             backendConfigPanel.setBackend(preferredBackendId())
@@ -405,7 +397,7 @@ class SettingsPanel(
             val newSalt = McpSettings.generateToken()
             settings = settings.copy(hostAnonymizationSalt = newSalt)
             rotateSaltBtn.toolTipText = "Rotates the salt used for host anonymization (e.g. host-xxxxxx.local). Current: ${newSalt.take(8)}..."
-            JOptionPane.showMessageDialog(panel, "Salt rotated. New anonymized hosts will be different.", "Privacy", JOptionPane.INFORMATION_MESSAGE)
+            JOptionPane.showMessageDialog(dialogParentComponent(), "Salt rotated. New anonymized hosts will be different.", "Privacy", JOptionPane.INFORMATION_MESSAGE)
         }
         refreshProfilesBtn.addActionListener {
             refreshProfileOptions()
@@ -474,7 +466,7 @@ class SettingsPanel(
             val level = activeAiRiskLevelCombo.selectedItem as? String
             if (level == "DANGEROUS") {
                 JOptionPane.showMessageDialog(
-                    panel,
+                    dialogParentComponent(),
                     "⚠️ DANGEROUS mode may modify or delete data. Only use in authorized test environments.",
                     "Active Scanner Warning",
                     JOptionPane.WARNING_MESSAGE
@@ -506,48 +498,6 @@ class SettingsPanel(
         }
         statusRefreshTimer.start()
 
-        val save = JButton("Save settings")
-        save.font = UiTheme.Typography.label
-        save.background = UiTheme.Colors.primary
-        save.foreground = UiTheme.Colors.onPrimary
-        save.isOpaque = true
-        save.border = EmptyBorder(8, 14, 8, 14)
-        save.isFocusPainted = false
-        save.addActionListener {
-            applyAndSaveSettings(currentSettings())
-        }
-
-        val restoreDefaults = JButton("Restore defaults")
-        restoreDefaults.font = UiTheme.Typography.label
-        restoreDefaults.background = UiTheme.Colors.surface
-        restoreDefaults.foreground = UiTheme.Colors.primary
-        restoreDefaults.isOpaque = true
-        restoreDefaults.border = LineBorder(UiTheme.Colors.outline, 1, true)
-        restoreDefaults.isFocusPainted = false
-        restoreDefaults.addActionListener {
-            val confirmed = JOptionPane.showConfirmDialog(
-                panel,
-                "Restore default settings? This will overwrite current values.",
-                "Restore defaults",
-                JOptionPane.YES_NO_OPTION
-            )
-            if (confirmed != JOptionPane.YES_OPTION) return@addActionListener
-            val defaults = settingsRepo.defaultSettings()
-            applySettingsToUi(defaults)
-            applyAndSaveSettings(defaults)
-        }
-
-        val scroll = JScrollPane(content)
-        scroll.border = EmptyBorder(0, 0, 0, 0)
-        scroll.viewport.background = UiTheme.Colors.surface
-        panel.add(scroll, BorderLayout.CENTER)
-
-        val footer = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 12, 0))
-        footer.border = EmptyBorder(6, 12, 10, 12)
-        footer.background = UiTheme.Colors.surface
-        footer.add(save)
-        footer.add(restoreDefaults)
-        panel.add(footer, BorderLayout.SOUTH)
     }
 
     private fun refreshProfileOptions() {
@@ -563,7 +513,42 @@ class SettingsPanel(
         profilePicker.selectedItem = if (current.isNotBlank()) current else options.firstOrNull()
     }
 
-    fun panelComponent() = panel
+    fun setDialogParent(component: JComponent) {
+        dialogParent = component
+    }
+
+    fun generalTabComponent(): JComponent = generalTab
+
+    fun passiveScannerTabComponent(): JComponent = passiveScannerTab
+
+    fun activeScannerTabComponent(): JComponent = activeScannerTab
+
+    fun mcpTabComponent(): JComponent = mcpTab
+
+    fun burpIntegrationTabComponent(): JComponent = burpIntegrationTab
+
+    fun promptsTabComponent(): JComponent = promptsTab
+
+    fun privacyTabComponent(): JComponent = privacyTab
+
+    fun helpTabComponent(): JComponent = helpTab
+
+    fun saveSettings() {
+        applyAndSaveSettings(currentSettings())
+    }
+
+    fun restoreDefaultsWithConfirmation() {
+        val confirmed = JOptionPane.showConfirmDialog(
+            dialogParent,
+            "Restore default settings? This will overwrite current values.",
+            "Restore defaults",
+            JOptionPane.YES_NO_OPTION
+        )
+        if (confirmed != JOptionPane.YES_OPTION) return
+        val defaults = settingsRepo.defaultSettings()
+        applySettingsToUi(defaults)
+        applyAndSaveSettings(defaults)
+    }
 
     fun setPreferredBackend(value: String) {
         preferredBackend.selectedItem = value
@@ -814,6 +799,50 @@ class SettingsPanel(
         }
     }
 
+    private fun dialogParentComponent(): JComponent? = dialogParent
+
+    private fun sectionPanel(title: String, subtitle: String, content: JComponent): JPanel {
+        val header = JPanel()
+        header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
+        header.background = UiTheme.Colors.surface
+
+        val titleLabel = JLabel(title)
+        titleLabel.font = UiTheme.Typography.title
+        titleLabel.foreground = UiTheme.Colors.onSurface
+
+        val subtitleLabel = JLabel(subtitle)
+        subtitleLabel.font = UiTheme.Typography.body
+        subtitleLabel.foreground = UiTheme.Colors.onSurfaceVariant
+
+        header.add(titleLabel)
+        header.add(Box.createRigidArea(java.awt.Dimension(0, 4)))
+        header.add(subtitleLabel)
+
+        return JPanel(BorderLayout()).apply {
+            background = UiTheme.Colors.surface
+            border = EmptyBorder(6, 8, 8, 8)
+            add(header, BorderLayout.NORTH)
+            add(content, BorderLayout.CENTER)
+        }
+    }
+
+    private fun buildTabPanel(sections: List<JComponent>, border: EmptyBorder): JComponent {
+        val content = JPanel()
+        content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
+        content.background = UiTheme.Colors.surface
+        content.border = border
+        sections.forEachIndexed { index, section ->
+            content.add(section)
+            if (index < sections.lastIndex) {
+                content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
+            }
+        }
+        val scroll = JScrollPane(content)
+        scroll.border = EmptyBorder(0, 0, 0, 0)
+        scroll.viewport.background = UiTheme.Colors.surface
+        return scroll
+    }
+
     private fun formGrid(): JPanel {
         val grid = JPanel(GridBagLayout())
         grid.background = UiTheme.Colors.surface
@@ -961,20 +990,19 @@ class SettingsPanel(
                     if (java.awt.Desktop.isDesktopSupported()) {
                         java.awt.Desktop.getDesktop().browse(event.url.toURI())
                     } else {
-                        JOptionPane.showMessageDialog(panel, "Open this URL in your browser: ${event.url}", "Help", JOptionPane.INFORMATION_MESSAGE)
+                        JOptionPane.showMessageDialog(dialogParentComponent(), "Open this URL in your browser: ${event.url}", "Help", JOptionPane.INFORMATION_MESSAGE)
                     }
                 } catch (_: Exception) {
-                    JOptionPane.showMessageDialog(panel, "Open this URL in your browser: ${event.url}", "Help", JOptionPane.INFORMATION_MESSAGE)
+                    JOptionPane.showMessageDialog(dialogParentComponent(), "Open this URL in your browser: ${event.url}", "Help", JOptionPane.INFORMATION_MESSAGE)
                 }
             }
         }
         body.add(helpPane, BorderLayout.CENTER)
 
-        return AccordionPanel(
-            title = "❓ Help",
+        return sectionPanel(
+            title = "Help",
             subtitle = "Quick start and documentation links.",
-            content = body,
-            initiallyExpanded = false
+            content = body
         )
     }
 
@@ -1049,11 +1077,10 @@ class SettingsPanel(
 
         body.add(grid, BorderLayout.CENTER)
 
-        return AccordionPanel(
-            title = "🔍 AI Passive Scanner",
+        return sectionPanel(
+            title = "AI Passive Scanner",
             subtitle = "Automatically analyze proxy traffic for vulnerabilities (XSS, SQLi, IDOR, BOLA, BAC, etc.)",
-            content = body,
-            initiallyExpanded = false
+            content = body
         )
     }
 
@@ -1094,7 +1121,7 @@ class SettingsPanel(
         val findings = passiveAiScanner.getLastFindings(20)
         if (findings.isEmpty()) {
             JOptionPane.showMessageDialog(
-                panel,
+                dialogParentComponent(),
                 "No findings yet. Enable the scanner and browse the target to generate findings.",
                 "AI Passive Scanner Findings",
                 JOptionPane.INFORMATION_MESSAGE
@@ -1123,7 +1150,7 @@ class SettingsPanel(
         textArea.columns = 60
 
         JOptionPane.showMessageDialog(
-            panel,
+            dialogParentComponent(),
             JScrollPane(textArea),
             "AI Passive Scanner Findings (${findings.size} recent)",
             JOptionPane.PLAIN_MESSAGE
@@ -1134,7 +1161,7 @@ class SettingsPanel(
         val findings = activeAiScanner.getRecentConfirmations(20)
         if (findings.isEmpty()) {
             JOptionPane.showMessageDialog(
-                panel,
+                dialogParentComponent(),
                 "No active confirmations yet. Run active scans to generate findings.",
                 "AI Active Scanner Findings",
                 JOptionPane.INFORMATION_MESSAGE
@@ -1161,7 +1188,7 @@ class SettingsPanel(
         textArea.columns = 60
 
         JOptionPane.showMessageDialog(
-            panel,
+            dialogParentComponent(),
             JScrollPane(textArea),
             "AI Active Scanner Findings (${findings.size} recent)",
             JOptionPane.PLAIN_MESSAGE
@@ -1173,7 +1200,7 @@ class SettingsPanel(
         val activeFindings = activeAiScanner.getRecentConfirmations(50)
         if (passiveFindings.isEmpty() && activeFindings.isEmpty()) {
             JOptionPane.showMessageDialog(
-                panel,
+                dialogParentComponent(),
                 "No findings yet. Run passive or active scans to populate triage.",
                 "Scanner Triage",
                 JOptionPane.INFORMATION_MESSAGE
@@ -1253,7 +1280,7 @@ class SettingsPanel(
         textArea.columns = 70
 
         JOptionPane.showMessageDialog(
-            panel,
+            dialogParentComponent(),
             JScrollPane(textArea),
             "Scanner Triage (${sorted.size} grouped findings)",
             JOptionPane.PLAIN_MESSAGE
@@ -1372,11 +1399,10 @@ class SettingsPanel(
 
         body.add(grid, BorderLayout.CENTER)
 
-        return AccordionPanel(
-            title = "⚡ AI Active Scanner",
+        return sectionPanel(
+            title = "AI Active Scanner",
             subtitle = "Confirm vulnerabilities by sending test payloads (SQLi, XSS, LFI, CMDI, SSRF, etc.)",
-            content = body,
-            initiallyExpanded = false
+            content = body
         )
     }
 
@@ -1448,8 +1474,10 @@ class SettingsPanel(
         content.add(requestTitle)
 
         val requestGrid = formGrid()
-        addRowPair(requestGrid, "Find vulnerabilities", JScrollPane(promptRequest), "Analyze this request", JScrollPane(promptSummary))
-        addRowPair(requestGrid, "Explain JS", JScrollPane(promptJs), "Access control", JScrollPane(promptAccessControl))
+        addRowFull(requestGrid, "Find vulnerabilities", JScrollPane(promptRequest))
+        addRowFull(requestGrid, "Analyze this request", JScrollPane(promptSummary))
+        addRowFull(requestGrid, "Explain JS", JScrollPane(promptJs))
+        addRowFull(requestGrid, "Access control", JScrollPane(promptAccessControl))
         addRowFull(requestGrid, "Login sequence", JScrollPane(promptLoginSequence))
         content.add(requestGrid)
 
@@ -1460,27 +1488,27 @@ class SettingsPanel(
         content.add(issueTitle)
 
         val issueGrid = formGrid()
-        addRowPair(issueGrid, "Analyze this issue", JScrollPane(promptIssueAnalyze), "Generate PoC & validate", JScrollPane(promptIssuePoc))
-        addRowPair(issueGrid, "Impact & severity", JScrollPane(promptIssueImpact), "Full report", JScrollPane(promptIssueFull))
+        addRowFull(issueGrid, "Analyze this issue", JScrollPane(promptIssueAnalyze))
+        addRowFull(issueGrid, "Generate PoC & validate", JScrollPane(promptIssuePoc))
+        addRowFull(issueGrid, "Impact & severity", JScrollPane(promptIssueImpact))
+        addRowFull(issueGrid, "Full report", JScrollPane(promptIssueFull))
         content.add(issueGrid)
 
         body.add(content, BorderLayout.CENTER)
-        return AccordionPanel(
-            title = "📝 Prompt Templates",
+        return sectionPanel(
+            title = "Prompt Templates",
             subtitle = "Edit the default prompts used by context actions.",
-            content = body,
-            initiallyExpanded = false
+            content = body
         )
     }
 
     private fun mcpSection(): JPanel {
         val body = JPanel(BorderLayout())
         body.background = UiTheme.Colors.surface
-        val wrapper = AccordionPanel(
-            title = "🌐 MCP Server",
+        val wrapper = sectionPanel(
+            title = "MCP Server",
             subtitle = "Built-in MCP server (SSE + optional stdio bridge).",
-            content = body,
-            initiallyExpanded = false
+            content = body
         )
 
         val grid = formGrid()
@@ -1608,7 +1636,7 @@ class SettingsPanel(
             label.foreground = UiTheme.Colors.onSurface
             toolsPanel.add(label)
 
-            val grid = JPanel(java.awt.GridLayout(0, 2, 12, 4))
+            val grid = JPanel(java.awt.GridLayout(0, 4, 16, 4))
             grid.background = UiTheme.Colors.surface
             tools.sortedBy { it.title }.forEach { tool ->
                 val title = if (tool.unsafeOnly) "${tool.title} (unsafe)" else tool.title
@@ -1740,7 +1768,7 @@ class SettingsPanel(
 
     private fun openExternalCli(backendId: String, command: String) {
         if (command.isBlank()) {
-            JOptionPane.showMessageDialog(panel, "Command is empty for $backendId.", "AI Agent", JOptionPane.WARNING_MESSAGE)
+            JOptionPane.showMessageDialog(dialogParentComponent(), "Command is empty for $backendId.", "AI Agent", JOptionPane.WARNING_MESSAGE)
             return
         }
         try {
@@ -1764,7 +1792,7 @@ class SettingsPanel(
             process.start()
         } catch (e: Exception) {
             api.logging().logToError("Failed to open CLI for $backendId: ${e.message}")
-            JOptionPane.showMessageDialog(panel, "Failed to open CLI: ${e.message}", "AI Agent", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(dialogParentComponent(), "Failed to open CLI: ${e.message}", "AI Agent", JOptionPane.ERROR_MESSAGE)
         }
     }
 
