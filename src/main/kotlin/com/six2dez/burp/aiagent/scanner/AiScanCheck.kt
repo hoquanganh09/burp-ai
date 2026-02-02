@@ -149,7 +149,17 @@ class AiScanCheck(
         
         // Build request with payload using Burp's ByteArray
         val payloadBytes = burp.api.montoya.core.ByteArray.byteArray(payload.value)
-        val attackRequest = insertionPoint.buildHttpRequestWithPayload(payloadBytes)
+        val baseService = baseRequestResponse.httpService()
+        val attackRequestBase = insertionPoint.buildHttpRequestWithPayload(payloadBytes)
+        val attackRequest = if (attackRequestBase.httpService() == null) {
+            attackRequestBase.withService(baseService)
+        } else {
+            attackRequestBase
+        }
+        if (attackRequest.httpService() == null) {
+            api.logging().logToError("[AiScanCheck] Cannot send request: HTTP service is null for insertion point ${insertionPoint.name()}")
+            return null
+        }
         
         // Measure baseline if needed for time-based
         val baselineTime = if (payload.detectionMethod == DetectionMethod.BLIND_TIME) {
