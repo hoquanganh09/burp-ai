@@ -145,7 +145,8 @@ class McpSupervisor(
             } else {
                 false
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            api.logging().logToOutput("MCP probe failed on ${settings.host}:${settings.port}: ${e.message}")
             false
         }
     }
@@ -162,8 +163,8 @@ class McpSupervisor(
             conn.connect()
             conn.responseCode // trigger request
             conn.disconnect()
-        } catch (_: Exception) {
-            // Ignore - might be our own server or different token
+        } catch (e: Exception) {
+            api.logging().logToOutput("MCP remote shutdown request was not accepted: ${e.message}")
         }
     }
 

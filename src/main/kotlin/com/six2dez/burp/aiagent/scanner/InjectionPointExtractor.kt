@@ -1,12 +1,14 @@
 package com.six2dez.burp.aiagent.scanner
 
 import burp.api.montoya.http.message.requests.HttpRequest
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.net.URI
 
 object InjectionPointExtractor {
-    private val jsonFieldPattern = Regex("\"([A-Za-z0-9_\\-]+)\"\\s*:\\s*(\"([^\"]*)\"|(-?\\d+(?:\\.\\d+)?))")
+    private val jsonFieldPattern = Regex("\"([A-Za-z0-9_\\-]+)\"\\s*:\\s*(\"([^\"\\\\]*(?:\\\\.[^\"\\\\]*)*)\"|(-?\\d+(?:\\.\\d+)?)|(true|false|null))")
     private val xmlElementPattern = Regex("<([A-Za-z0-9_\\-]+)>([^<]{1,200})</\\1>")
     private val pathIdPattern = Regex("([0-9]+|[a-f0-9-]{36}|[a-f0-9]{24})", RegexOption.IGNORE_CASE)
+    private val jsonMapper = ObjectMapper()
 
     fun extract(request: HttpRequest, headerAllowlist: Set<String>, maxFields: Int = 20): List<InjectionPoint> {
         val points = mutableListOf<InjectionPoint>()
@@ -57,9 +59,34 @@ object InjectionPointExtractor {
 
     private fun extractJsonFields(body: String, maxFields: Int): List<InjectionPoint> {
         val results = mutableListOf<InjectionPoint>()
+        try {
+            val root = jsonMapper.readTree(body)
+            if (root.isObject) {
+                val fields = root.fields()
+                while (fields.hasNext() && results.size < maxFields) {
+                    val field = fields.next()
+                    val valueNode = field.value
+                    val value = when {
+                        valueNode.isTextual -> valueNode.asText()
+                        valueNode.isNumber -> valueNode.numberValue().toString()
+                        valueNode.isBoolean -> valueNode.booleanValue().toString()
+                        valueNode.isNull -> "null"
+                        else -> continue
+                    }
+                    results.add(InjectionPoint(InjectionType.JSON_FIELD, field.key, value))
+                }
+                if (results.isNotEmpty()) {
+                    return results
+                }
+            }
+        } catch (_: Exception) {
+            // Fall back to regex extraction for partially malformed bodies.
+        }
         for (match in jsonFieldPattern.findAll(body)) {
             val name = match.groupValues[1]
-            val value = match.groupValues[3].ifEmpty { match.groupValues[4] }
+            val value = match.groupValues[3]
+                .ifEmpty { match.groupValues[4] }
+                .ifEmpty { match.groupValues[5] }
             results.add(InjectionPoint(InjectionType.JSON_FIELD, name, value))
             if (results.size >= maxFields) break
         }

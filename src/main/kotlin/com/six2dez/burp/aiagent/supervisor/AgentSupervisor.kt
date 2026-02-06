@@ -7,6 +7,7 @@ import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.backends.DiagnosableConnection
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.concurrent.ExecutorService
@@ -16,8 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.UUID
+import java.util.concurrent.locks.ReentrantLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import kotlin.concurrent.withLock
 
 class AgentSupervisor(
     private val api: MontoyaApi,
@@ -47,6 +50,7 @@ class AgentSupervisor(
     private val immediateCrashCount = AtomicInteger(0)
     private val chatSessionManager = ChatSessionManager()
     private val services = java.util.concurrent.ConcurrentHashMap<String, Process>()
+    private val lifecycleLock = ReentrantLock()
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(java.time.Duration.ofSeconds(3))
         .readTimeout(java.time.Duration.ofSeconds(3))
@@ -54,7 +58,12 @@ class AgentSupervisor(
     private val monitorExec = Executors.newSingleThreadScheduledExecutor()
 
     init {
-        monitorExec.scheduleAtFixedRate({ checkHealth() }, 2, 2, TimeUnit.SECONDS)
+        monitorExec.scheduleAtFixedRate(
+            { checkHealth() },
+            Defaults.HEALTH_CHECK_INTERVAL_MS,
+            Defaults.HEALTH_CHECK_INTERVAL_MS,
+            TimeUnit.MILLISECONDS
+        )
     }
 
     fun applySettings(settings: AgentSettings) {
@@ -68,48 +77,50 @@ class AgentSupervisor(
     fun lastStartError(): String? = lastErrorRef.get()
 
     fun startOrAttach(backendId: String): Boolean {
-        lastErrorRef.set(null)
-        autoRestartSuppressed.set(null)
-        immediateCrashCount.set(0)
+        return lifecycleLock.withLock {
+            lastErrorRef.set(null)
+            autoRestartSuppressed.set(null)
+            immediateCrashCount.set(0)
 
-        // Check if already running the requested backend
-        val current = stateRef.get()
-        if (current is AgentState.Running && current.backendId == backendId && current.connection.isAlive()) {
-            return true
-        }
+            // Check if already running the requested backend
+            val current = stateRef.get()
+            if (current is AgentState.Running && current.backendId == backendId && current.connection.isAlive()) {
+                return@withLock true
+            }
 
-        stop()
+            stop()
 
-        val backend = registry.get(backendId)
-        if (backend == null) {
-            val msg = "Backend not found: $backendId"
-            lastErrorRef.set(msg)
-            api.logging().logToError(msg)
-            return false
-        }
+            val backend = registry.get(backendId)
+            if (backend == null) {
+                val msg = "Backend not found: $backendId"
+                lastErrorRef.set(msg)
+                api.logging().logToError(msg)
+                return@withLock false
+            }
 
-        return try {
-            val sessionId = "session-" + UUID.randomUUID().toString()
-            val launchConfig = buildLaunchConfig(backendId, sessionId, embeddedMode = true)
-            api.logging().logToOutput("Launching backend $backendId with config: $launchConfig")
-            val conn = backend.launch(launchConfig)
+            try {
+                val sessionId = "session-" + UUID.randomUUID().toString()
+                val launchConfig = buildLaunchConfig(backendId, sessionId, embeddedMode = true)
+                api.logging().logToOutput("Launching backend $backendId with config: $launchConfig")
+                val conn = backend.launch(launchConfig)
 
-            val newState = AgentState.Running(
-                backendId = backendId,
-                sessionId = sessionId,
-                connection = conn,
-                launchConfig = launchConfig,
-                startedAt = System.currentTimeMillis()
-            )
-            stateRef.set(newState)
+                val newState = AgentState.Running(
+                    backendId = backendId,
+                    sessionId = sessionId,
+                    connection = conn,
+                    launchConfig = launchConfig,
+                    startedAt = System.currentTimeMillis()
+                )
+                stateRef.set(newState)
 
-            audit.logEvent("session_start", mapOf("backendId" to backendId, "sessionId" to sessionId, "config" to launchConfig))
-            true
-        } catch (e: Exception) {
-            val msg = "Failed to launch backend $backendId: ${e.message}"
-            lastErrorRef.set(msg)
-            api.logging().logToError(msg)
-            false
+                audit.logEvent("session_start", mapOf("backendId" to backendId, "sessionId" to sessionId, "config" to launchConfig))
+                true
+            } catch (e: Exception) {
+                val msg = "Failed to launch backend $backendId: ${e.message}"
+                lastErrorRef.set(msg)
+                api.logging().logToError(msg)
+                false
+            }
         }
     }
 
@@ -167,22 +178,54 @@ class AgentSupervisor(
         return startService("lmstudio-server", cmd)
     }
 
-    fun stop() {
-        val prev = stateRef.getAndSet(AgentState.Idle)
-        if (prev is AgentState.Running) {
-            prev.connection.stop()
-            audit.logEvent("session_stop", mapOf("backendId" to prev.backendId))
+    fun isBackendHealthy(settings: AgentSettings): Boolean {
+        return when (settings.preferredBackendId) {
+            "ollama" -> isOllamaHealthy(settings)
+            "lmstudio" -> isLmStudioHealthy(settings)
+            "openai-compatible" -> {
+                // Basic check for OpenAI compatible
+                val url = settings.openAiCompatibleUrl.trimEnd('/') + "/models"
+                try {
+                    val headers = HeaderParser.withBearerToken(
+                        settings.openAiCompatibleApiKey,
+                        HeaderParser.parse(settings.openAiCompatibleHeaders)
+                    )
+                    val req = Request.Builder()
+                        .url(url)
+                        .apply { headers.forEach { (name, value) -> header(name, value) } }
+                        .get()
+                        .build()
+                    httpClient.newCall(req).execute().close()
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+            }
+            // CLI backends are considered "healthy" if configured (no easy poll)
+            else -> true
         }
-        autoRestartSuppressed.set(null)
-        immediateCrashCount.set(0)
+    }
+
+    fun stop() {
+        lifecycleLock.withLock {
+            val prev = stateRef.getAndSet(AgentState.Idle)
+            if (prev is AgentState.Running) {
+                prev.connection.stop()
+                audit.logEvent("session_stop", mapOf("backendId" to prev.backendId))
+            }
+            autoRestartSuppressed.set(null)
+            immediateCrashCount.set(0)
+        }
     }
 
     fun restart(): Boolean {
-        val current = stateRef.get()
-        if (current !is AgentState.Running) return false
-        val backendId = current.backendId
-        stop()
-        return startOrAttach(backendId)
+        return lifecycleLock.withLock {
+            val current = stateRef.get()
+            if (current !is AgentState.Running) return@withLock false
+            val backendId = current.backendId
+            stop()
+            startOrAttach(backendId)
+        }
     }
 
     fun send(
@@ -343,18 +386,7 @@ class AgentSupervisor(
         return when (backendId) {
             "codex-cli" -> {
                 val cmd = (settings?.codexCmd ?: prefs.getString("codex.cmd") ?: "codex").trim()
-                val env = if (embeddedMode) {
-                    baseEnv + mapOf(
-                        "CI" to "1",
-                        "TERM" to "dumb",
-                        "NO_COLOR" to "1",
-                        "CLICOLOR" to "0",
-                        "FORCE_COLOR" to "0",
-                        "BURP_AI_AGENT_EMBEDDED" to "1"
-                    )
-                } else {
-                    baseEnv
-                }
+                val env = embeddedCliEnv(baseEnv, embeddedMode)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Codex CLI",
@@ -368,18 +400,7 @@ class AgentSupervisor(
             }
             "gemini-cli" -> {
                 val cmd = (settings?.geminiCmd ?: prefs.getString("gemini.cmd") ?: "gemini").trim()
-                val env = if (embeddedMode) {
-                    baseEnv + mapOf(
-                        "CI" to "1",
-                        "TERM" to "dumb",
-                        "NO_COLOR" to "1",
-                        "CLICOLOR" to "0",
-                        "FORCE_COLOR" to "0",
-                        "BURP_AI_AGENT_EMBEDDED" to "1"
-                    )
-                } else {
-                    baseEnv
-                }
+                val env = embeddedCliEnv(baseEnv, embeddedMode)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Gemini CLI",
@@ -394,18 +415,7 @@ class AgentSupervisor(
             "opencode-cli" -> {
                 val baseCmd = (settings?.opencodeCmd ?: prefs.getString("opencode.cmd") ?: "opencode").trim()
                 val cmdParts = tokenizeCommand(baseCmd)
-                val env = if (embeddedMode) {
-                    baseEnv + mapOf(
-                        "CI" to "1",
-                        "TERM" to "dumb",
-                        "NO_COLOR" to "1",
-                        "CLICOLOR" to "0",
-                        "FORCE_COLOR" to "0",
-                        "BURP_AI_AGENT_EMBEDDED" to "1"
-                    )
-                } else {
-                    baseEnv
-                }
+                val env = embeddedCliEnv(baseEnv, embeddedMode)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "OpenCode CLI",
@@ -419,18 +429,7 @@ class AgentSupervisor(
             }
             "claude-cli" -> {
                 val cmd = (settings?.claudeCmd ?: prefs.getString("claude.cmd") ?: "claude").trim()
-                val env = if (embeddedMode) {
-                    baseEnv + mapOf(
-                        "CI" to "1",
-                        "TERM" to "dumb",
-                        "NO_COLOR" to "1",
-                        "CLICOLOR" to "0",
-                        "FORCE_COLOR" to "0",
-                        "BURP_AI_AGENT_EMBEDDED" to "1"
-                    )
-                } else {
-                    baseEnv
-                }
+                val env = embeddedCliEnv(baseEnv, embeddedMode)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Claude Code",
@@ -453,7 +452,7 @@ class AgentSupervisor(
                     HeaderParser.parse(rawHeaders)
                 )
                 val timeoutSeconds = settings?.ollamaTimeoutSeconds
-                    ?: (prefs.getInteger("ollama.timeoutSeconds") ?: 120)
+                    ?: (prefs.getInteger("ollama.timeoutSeconds") ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Ollama",
@@ -465,14 +464,16 @@ class AgentSupervisor(
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
-                    cliSessionId = cliSessionId
+                    cliSessionId = cliSessionId,
+                    contextWindow = settings?.ollamaContextWindow
+                        ?: prefs.getInteger("ollama.contextWindow")
                 )
             }
             "lmstudio" -> {
                 val url = (settings?.lmStudioUrl ?: prefs.getString("lmstudio.url") ?: "http://127.0.0.1:1234").trim()
                 val model = (settings?.lmStudioModel ?: prefs.getString("lmstudio.model") ?: "lmstudio").trim()
                 val timeoutSeconds = settings?.lmStudioTimeoutSeconds
-                    ?: (prefs.getInteger("lmstudio.timeoutSeconds") ?: 120)
+                    ?: (prefs.getInteger("lmstudio.timeoutSeconds") ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS)
                 val apiKey = settings?.lmStudioApiKey ?: prefs.getString("lmstudio.apiKey").orEmpty()
                 val rawHeaders = settings?.lmStudioHeaders ?: prefs.getString("lmstudio.headers").orEmpty()
                 val headers = HeaderParser.withBearerToken(
@@ -497,7 +498,7 @@ class AgentSupervisor(
                 val url = (settings?.openAiCompatibleUrl ?: prefs.getString("openai.compat.url") ?: "").trim()
                 val model = (settings?.openAiCompatibleModel ?: prefs.getString("openai.compat.model") ?: "").trim()
                 val timeoutSeconds = settings?.openAiCompatibleTimeoutSeconds
-                    ?: (prefs.getInteger("openai.compat.timeoutSeconds") ?: 120)
+                    ?: (prefs.getInteger("openai.compat.timeoutSeconds") ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS)
                 val apiKey = settings?.openAiCompatibleApiKey ?: prefs.getString("openai.compat.apiKey").orEmpty()
                 val rawHeaders = settings?.openAiCompatibleHeaders ?: prefs.getString("openai.compat.headers").orEmpty()
                 val headers = HeaderParser.withBearerToken(
@@ -520,6 +521,18 @@ class AgentSupervisor(
             }
             else -> BackendLaunchConfig(backendId, backendId, embeddedMode = embeddedMode, env = baseEnv, cliSessionId = cliSessionId)
         }
+    }
+
+    private fun embeddedCliEnv(baseEnv: Map<String, String>, embeddedMode: Boolean): Map<String, String> {
+        if (!embeddedMode) return baseEnv
+        return baseEnv + mapOf(
+            "CI" to "1",
+            "TERM" to "dumb",
+            "NO_COLOR" to "1",
+            "CLICOLOR" to "0",
+            "FORCE_COLOR" to "0",
+            "BURP_AI_AGENT_EMBEDDED" to "1"
+        )
     }
 
     private fun resolveOllamaModel(settings: AgentSettings?): String {
@@ -618,7 +631,8 @@ class AgentSupervisor(
                     reader.forEachLine { line ->
                         safeLogOutput("[$name] $line")
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    safeLogOutput("[$name] output stream closed: ${e.message}")
                 }
             }
             safeLogOutput("Started service: $name")
@@ -643,7 +657,7 @@ class AgentSupervisor(
                     currentToken.append(command[i + 1])
                     i++
                 }
-                (c == '"' || c == '"') -> {
+                (c == '"' || c == '\'') -> {
                     if (inQuotes) {
                         if (c == quoteChar) {
                             inQuotes = false
@@ -705,7 +719,9 @@ class AgentSupervisor(
         for ((name, process) in services) {
             try {
                 process.destroyForcibly()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                safeLogError("Failed to terminate service '$name': ${e.message}")
+            }
         }
         services.clear()
         httpClient.dispatcher.executorService.shutdown()

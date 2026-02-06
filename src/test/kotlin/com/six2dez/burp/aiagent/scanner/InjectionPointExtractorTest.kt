@@ -62,4 +62,20 @@ class InjectionPointExtractorTest {
         assertTrue(points.any { it.type == InjectionType.XML_ELEMENT && it.name == "id" && it.originalValue == "42" })
         assertTrue(points.any { it.type == InjectionType.XML_ELEMENT && it.name == "item" && it.originalValue == "book" })
     }
+
+    @Test
+    fun extractsJsonBooleansNullAndEscapedStrings() {
+        val request = mock<HttpRequest>()
+        whenever(request.parameters()).thenReturn(emptyList())
+        whenever(request.headers()).thenReturn(emptyList())
+        whenever(request.headerValue("Content-Type")).thenReturn("application/json")
+        whenever(request.bodyToString()).thenReturn("""{"name":"a\\\"b","enabled":true,"deleted":null}""")
+        whenever(request.url()).thenReturn("http://example.com/api/user")
+
+        val points = InjectionPointExtractor.extract(request, emptySet())
+
+        assertTrue(points.any { it.type == InjectionType.JSON_FIELD && it.name == "name" && it.originalValue.contains("a") })
+        assertTrue(points.any { it.type == InjectionType.JSON_FIELD && it.name == "enabled" && it.originalValue == "true" })
+        assertTrue(points.any { it.type == InjectionType.JSON_FIELD && it.name == "deleted" && it.originalValue == "null" })
+    }
 }

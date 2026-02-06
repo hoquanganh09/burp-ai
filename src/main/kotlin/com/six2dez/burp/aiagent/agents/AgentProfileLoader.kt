@@ -70,6 +70,23 @@ object AgentProfileLoader {
         }
     }
 
+    fun validateProfile(profileName: String, availableTools: Set<String>): List<String> {
+        val path = resolveProfilePathByName(profileName) ?: return emptyList()
+        val text = try {
+            Files.readString(path)
+        } catch (e: Exception) {
+            BackendDiagnostics.logError("Failed to read AGENTS profile for validation: ${path}. ${e.message}")
+            return emptyList()
+        }
+        val referencedTools = extractReferencedTools(text)
+        if (referencedTools.isEmpty()) return emptyList()
+        val missing = referencedTools
+            .filter { it !in availableTools }
+            .sorted()
+        if (missing.isEmpty()) return emptyList()
+        return missing.map { "Profile references MCP tool '$it' but it is disabled or unavailable." }
+    }
+
     fun ensureBundledProfilesInstalled() {
         try {
             val baseDir = baseDir()
@@ -112,7 +129,8 @@ object AgentProfileLoader {
         val profilePath = resolveProfilePath() ?: return null
         val modified = try {
             Files.getLastModifiedTime(profilePath).toMillis()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            BackendDiagnostics.logError("Failed to read AGENTS profile timestamp: ${profilePath}. ${e.message}")
             -1L
         }
         if (profilePath == cachedPath && modified == cachedModified) {
@@ -138,7 +156,8 @@ object AgentProfileLoader {
         val profileName = if (Files.isRegularFile(defaultFile)) {
             try {
                 Files.readString(defaultFile).trim()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                BackendDiagnostics.logError("Failed to read AGENTS default profile marker: ${e.message}")
                 ""
             }
         } else {
@@ -149,6 +168,14 @@ object AgentProfileLoader {
         } else {
             baseDir.resolve("pentester.md")
         }
+        return if (Files.isRegularFile(candidate)) candidate else null
+    }
+
+    private fun resolveProfilePathByName(profileName: String?): Path? {
+        val baseDir = baseDir()
+        val normalized = normalizeProfileName(profileName.orEmpty())
+        if (normalized.isBlank()) return null
+        val candidate = baseDir.resolve(normalized)
         return if (Files.isRegularFile(candidate)) candidate else null
     }
 
@@ -232,5 +259,38 @@ object AgentProfileLoader {
             .mapValues { it.value.toString().trim() }
             .filterValues { it.isNotBlank() }
         return AgentProfile(global = global, sections = parsedSections)
+    }
+
+    private fun extractReferencedTools(text: String): Set<String> {
+        val tools = linkedSetOf<String>()
+        val lines = text.replace("\r\n", "\n").replace("\r", "\n").lines()
+        val toolListHeaderPattern = Regex("^\\s*Available\\s+MCP\\s+Tools\\s*:\\s*$", RegexOption.IGNORE_CASE)
+        val sectionHeaderPattern = Regex("^\\s*\\[[A-Za-z0-9_\\-]+]\\s*$")
+        val titledHeaderPattern = Regex("^\\s*[A-Z][A-Z\\s_\\-]{2,}\\s*:\\s*$")
+        val bulletEntryPattern = Regex("^\\s*[-*]\\s*([^:]+)\\s*:\\s*.*$")
+        val toolTokenPattern = Regex("[a-z][a-z0-9_\\-]*", RegexOption.IGNORE_CASE)
+        val slashToolPattern = Regex("/tool\\s+([a-z0-9_\\-]+)", RegexOption.IGNORE_CASE)
+        val jsonToolPattern = Regex("\"tool\"\\s*:\\s*\"([a-z0-9_\\-]+)\"", RegexOption.IGNORE_CASE)
+        var inExplicitToolList = false
+        for (line in lines) {
+            if (toolListHeaderPattern.matches(line)) {
+                inExplicitToolList = true
+                continue
+            }
+            if (inExplicitToolList) {
+                if (line.isBlank() || sectionHeaderPattern.matches(line) || titledHeaderPattern.matches(line)) {
+                    inExplicitToolList = false
+                } else {
+                    bulletEntryPattern.find(line)?.groupValues?.getOrNull(1)?.let { toolExpr ->
+                        toolTokenPattern.findAll(toolExpr).forEach { token ->
+                            tools.add(token.value.lowercase())
+                        }
+                    }
+                }
+            }
+            slashToolPattern.findAll(line).forEach { m -> tools.add(m.groupValues[1].lowercase()) }
+            jsonToolPattern.findAll(line).forEach { m -> tools.add(m.groupValues[1].lowercase()) }
+        }
+        return tools
     }
 }

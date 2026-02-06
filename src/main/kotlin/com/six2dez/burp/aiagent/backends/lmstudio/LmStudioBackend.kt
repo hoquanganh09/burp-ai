@@ -6,12 +6,11 @@ import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
+import com.six2dez.burp.aiagent.backends.http.ConversationHistory
+import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.EOFException
-import java.net.Proxy
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -25,7 +24,7 @@ class LmStudioBackend : AiBackend {
         val baseUrl = config.baseUrl?.trimEnd('/') ?: "http://127.0.0.1:1234"
         val model = config.model?.ifBlank { "lmstudio" } ?: "lmstudio"
         val timeoutSeconds = (config.requestTimeoutSeconds ?: 120L).coerceIn(30L, 3600L)
-        val client = buildClient(timeoutSeconds)
+        val client = HttpBackendSupport.buildClient(timeoutSeconds)
         return LmStudioConnection(
             client,
             mapper,
@@ -39,18 +38,8 @@ class LmStudioBackend : AiBackend {
         )
     }
 
-    private fun buildClient(timeoutSeconds: Long): OkHttpClient {
-        return OkHttpClient.Builder()
-            .connectTimeout(java.time.Duration.ofSeconds(10))
-            .writeTimeout(java.time.Duration.ofSeconds(30))
-            .readTimeout(java.time.Duration.ofSeconds(timeoutSeconds))
-            .callTimeout(java.time.Duration.ofSeconds(timeoutSeconds))
-            .proxy(Proxy.NO_PROXY)
-            .build()
-    }
-
     private class LmStudioConnection(
-        private val client: OkHttpClient,
+        private val client: okhttp3.OkHttpClient,
         private val mapper: ObjectMapper,
         private val baseUrl: String,
         private val model: String,
@@ -64,8 +53,7 @@ class LmStudioBackend : AiBackend {
         private val exec = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "lmstudio-connection").apply { isDaemon = true }
         }
-        private val conversationHistory = mutableListOf<Map<String, String>>()
-        private val maxHistoryMessages = 20
+        private val conversationHistory = ConversationHistory(20)
 
         override fun isAlive(): Boolean = alive.get()
 
@@ -87,13 +75,8 @@ class LmStudioBackend : AiBackend {
                         }
                         try {
                             // Add user message to conversation history
-                            synchronized(conversationHistory) {
-                                conversationHistory.add(mapOf("role" to "user", "content" to text))
-                                while (conversationHistory.size > maxHistoryMessages) {
-                                    conversationHistory.removeAt(0)
-                                }
-                            }
-                            val messages = synchronized(conversationHistory) { conversationHistory.toList() }
+                            conversationHistory.addUser(text)
+                            val messages = conversationHistory.snapshot()
                             val payload = mapOf(
                                 "model" to model,
                                 "messages" to messages,
@@ -136,22 +119,17 @@ class LmStudioBackend : AiBackend {
                                 }
                                 debugLog("response <- ${content.take(200)}")
                                 // Add assistant response to conversation history
-                                synchronized(conversationHistory) {
-                                    conversationHistory.add(mapOf("role" to "assistant", "content" to content))
-                                    while (conversationHistory.size > maxHistoryMessages) {
-                                        conversationHistory.removeAt(0)
-                                    }
-                                }
+                                conversationHistory.addAssistant(content)
                                 onChunk(content)
                                 onComplete(null)
                                 return@submit
                             }
                         } catch (e: Exception) {
                             lastError = e
-                            if (!isRetryableConnectionError(e) || attempt == maxAttempts - 1) {
+                            if (!HttpBackendSupport.isRetryableConnectionError(e) || attempt == maxAttempts - 1) {
                                 throw e
                             }
-                            val delayMs = retryDelayMs(attempt)
+                            val delayMs = HttpBackendSupport.retryDelayMs(attempt)
                             debugLog("retrying in ${delayMs}ms after: ${e.message}")
                             try {
                                 Thread.sleep(delayMs)
@@ -179,30 +157,6 @@ class LmStudioBackend : AiBackend {
         override fun stop() {
             alive.set(false)
             exec.shutdownNow()
-        }
-
-        private fun isRetryableConnectionError(e: Exception): Boolean {
-            if (e is EOFException) return true
-            if (e is java.net.ConnectException || e is java.net.SocketTimeoutException) return true
-            if (e is java.net.SocketException) return true
-            val msg = e.message?.lowercase().orEmpty()
-            return msg.contains("failed to connect") ||
-                msg.contains("connection refused") ||
-                msg.contains("timeout") ||
-                msg.contains("unexpected end of stream") ||
-                msg.contains("stream was reset") ||
-                msg.contains("end of input")
-        }
-
-        private fun retryDelayMs(attempt: Int): Long {
-            return when (attempt) {
-                0 -> 500
-                1 -> 1000
-                2 -> 1500
-                3 -> 2000
-                4 -> 3000
-                else -> 4000
-            }
         }
     }
 }

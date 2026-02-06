@@ -6,13 +6,22 @@ import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.config.McpSettings
+import com.six2dez.burp.aiagent.config.SeverityLevel
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
+import com.six2dez.burp.aiagent.ui.panels.ActiveScanConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigState
+import com.six2dez.burp.aiagent.ui.panels.HelpConfigPanel
+import com.six2dez.burp.aiagent.ui.panels.McpConfigPanel
+import com.six2dez.burp.aiagent.ui.panels.PassiveScanConfigPanel
+import com.six2dez.burp.aiagent.ui.panels.PrivacyConfigPanel
+import com.six2dez.burp.aiagent.ui.panels.PromptConfigPanel
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.scanner.PayloadRisk
+import com.six2dez.burp.aiagent.scanner.ScanMode
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import burp.api.montoya.core.BurpSuiteEdition
 import java.awt.BorderLayout
@@ -83,6 +92,9 @@ class SettingsPanel(
     private val profilePicker = JComboBox<String>().apply {
         preferredSize = java.awt.Dimension(140, preferredSize.height)
         maximumSize = java.awt.Dimension(140, preferredSize.height)
+    }
+    private val profileWarningLabel = JLabel().apply {
+        isVisible = false
     }
     private val refreshProfilesBtn = JButton("Refresh")
     private val preferredBackend = JComboBox(backends.listBackendIds().toTypedArray()).apply {
@@ -164,7 +176,7 @@ class SettingsPanel(
         maximumSize = java.awt.Dimension(80, preferredSize.height)
     }
     private val passiveAiMinSeverityCombo = JComboBox(arrayOf("LOW", "MEDIUM", "HIGH", "CRITICAL")).apply {
-        selectedItem = settings.passiveAiMinSeverity
+        selectedItem = settings.passiveAiMinSeverity.name
         preferredSize = java.awt.Dimension(100, preferredSize.height)
         maximumSize = java.awt.Dimension(100, preferredSize.height)
     }
@@ -193,12 +205,12 @@ class SettingsPanel(
         maximumSize = java.awt.Dimension(80, preferredSize.height)
     }
     private val activeAiRiskLevelCombo = JComboBox(arrayOf("SAFE", "MODERATE", "DANGEROUS")).apply {
-        selectedItem = settings.activeAiMaxRiskLevel
+        selectedItem = settings.activeAiMaxRiskLevel.name
         preferredSize = java.awt.Dimension(110, preferredSize.height)
         maximumSize = java.awt.Dimension(110, preferredSize.height)
     }
     private val activeAiScanModeCombo = JComboBox(arrayOf("BUG_BOUNTY", "PENTEST", "FULL")).apply {
-        selectedItem = settings.activeAiScanMode
+        selectedItem = settings.activeAiScanMode.name
         preferredSize = java.awt.Dimension(120, preferredSize.height)
         maximumSize = java.awt.Dimension(120, preferredSize.height)
     }
@@ -233,6 +245,8 @@ class SettingsPanel(
         preferredBackend.toolTipText = "Default backend used for new sessions and context actions."
         profilePicker.toolTipText = "Select the AGENTS profile used for system instructions."
         refreshProfilesBtn.toolTipText = "Reload AGENTS profiles from disk."
+        profileWarningLabel.font = UiTheme.Typography.body
+        profileWarningLabel.foreground = UiTheme.Colors.statusCrashed
         privacyMode.toolTipText = "Controls how traffic is redacted before sending to a model."
         determinism.font = UiTheme.Typography.body
         determinism.background = UiTheme.Colors.surface
@@ -325,32 +339,11 @@ class SettingsPanel(
                 add(refreshProfilesBtn)
             }
             addRowFull(profileGrid, "Agent profile", profileRow)
+            addSpacerRow(profileGrid, 4)
+            addRowFull(profileGrid, "Profile warnings", profileWarningLabel)
             backendBody.add(profileGrid, BorderLayout.NORTH)
         }
-        val privacyBody = JPanel(BorderLayout()).apply {
-            background = UiTheme.Colors.surface
-        }
-        val privacySection = sectionPanel(
-            title = "Privacy & Logging",
-            subtitle = "Controls redaction and stable ordering of context.",
-            content = privacyBody
-        ).apply {
-            val grid = formGrid()
-            addRowFull(grid, "Privacy mode", privacyMode)
-            addSpacerRow(grid, 4)
-            addRowFull(grid, "Audit logging", auditEnabled)
-            addSpacerRow(grid, 4)
-            addRowFull(grid, "Auto-restart", autoRestart)
-            addSpacerRow(grid, 4)
-            addRowFull(grid, "Determinism mode", determinism)
-            addSpacerRow(grid, 4)
-            addRowFull(grid, "Anonymization", rotateSaltBtn)
-            addSpacerRow(grid, 8)
-            addRowFull(grid, "Privacy warning", privacyWarning)
-            addSpacerRow(grid, 4)
-            addRowFull(grid, "Active scan warning", privacyActiveWarning)
-            privacyBody.add(grid, BorderLayout.CENTER)
-        }
+        val privacySection = privacySection()
         val burpIntegrationBody = JPanel(BorderLayout()).apply {
             background = UiTheme.Colors.surface
         }
@@ -371,6 +364,13 @@ class SettingsPanel(
 
         preferredBackend.addActionListener {
             backendConfigPanel.setBackend(preferredBackendId())
+        }
+        profilePicker.addActionListener {
+            updateProfileWarnings()
+        }
+        refreshProfilesBtn.addActionListener {
+            refreshProfileOptions()
+            updateProfileWarnings()
         }
         privacyMode.addActionListener {
             updatePrivacyWarnings()
@@ -398,9 +398,6 @@ class SettingsPanel(
             settings = settings.copy(hostAnonymizationSalt = newSalt)
             rotateSaltBtn.toolTipText = "Rotates the salt used for host anonymization (e.g. host-xxxxxx.local). Current: ${newSalt.take(8)}..."
             JOptionPane.showMessageDialog(dialogParentComponent(), "Salt rotated. New anonymized hosts will be different.", "Privacy", JOptionPane.INFORMATION_MESSAGE)
-        }
-        refreshProfilesBtn.addActionListener {
-            refreshProfileOptions()
         }
         backendConfigPanel.onOpenCli = { backendId, command ->
             openExternalCli(backendId, command)
@@ -497,6 +494,7 @@ class SettingsPanel(
             refreshActiveAiStatus()
         }
         statusRefreshTimer.start()
+        updateProfileWarnings()
 
     }
 
@@ -618,6 +616,7 @@ class SettingsPanel(
             ollamaApiKey = backendState.ollamaApiKey,
             ollamaHeaders = backendState.ollamaHeaders,
             ollamaTimeoutSeconds = ollamaTimeoutSeconds,
+            ollamaContextWindow = settings.ollamaContextWindow,
             lmStudioUrl = backendState.lmStudioUrl,
             lmStudioModel = backendState.lmStudioModel,
             lmStudioTimeoutSeconds = lmStudioTimeoutSeconds,
@@ -650,16 +649,16 @@ class SettingsPanel(
             passiveAiRateSeconds = (passiveAiRateSpinner.value as? Int) ?: 5,
             passiveAiScopeOnly = passiveAiScopeOnly.isSelected,
             passiveAiMaxSizeKb = (passiveAiMaxSizeSpinner.value as? Int) ?: 96,
-            passiveAiMinSeverity = passiveAiMinSeverityCombo.selectedItem as? String ?: "LOW",
+            passiveAiMinSeverity = SeverityLevel.fromString(passiveAiMinSeverityCombo.selectedItem as? String),
             activeAiEnabled = activeAiEnabled.isSelected,
             activeAiMaxConcurrent = (activeAiMaxConcurrentSpinner.value as? Int) ?: 3,
             activeAiMaxPayloadsPerPoint = (activeAiMaxPayloadsSpinner.value as? Int) ?: 10,
             activeAiTimeoutSeconds = (activeAiTimeoutSpinner.value as? Int) ?: 30,
             activeAiRequestDelayMs = (activeAiDelaySpinner.value as? Int) ?: 100,
-            activeAiMaxRiskLevel = activeAiRiskLevelCombo.selectedItem as? String ?: "SAFE",
+            activeAiMaxRiskLevel = PayloadRisk.fromString(activeAiRiskLevelCombo.selectedItem as? String),
             activeAiScopeOnly = activeAiScopeOnly.isSelected,
             activeAiAutoFromPassive = activeAiAutoFromPassive.isSelected,
-            activeAiScanMode = activeAiScanModeCombo.selectedItem as? String ?: "FULL",
+            activeAiScanMode = ScanMode.fromString(activeAiScanModeCombo.selectedItem as? String),
             activeAiUseCollaborator = activeAiUseCollaborator.isSelected
         )
     }
@@ -735,7 +734,7 @@ class SettingsPanel(
         passiveAiScopeOnly.isSelected = updated.passiveAiScopeOnly
         passiveAiRateSpinner.value = updated.passiveAiRateSeconds
         passiveAiMaxSizeSpinner.value = updated.passiveAiMaxSizeKb
-        passiveAiMinSeverityCombo.selectedItem = updated.passiveAiMinSeverity
+        passiveAiMinSeverityCombo.selectedItem = updated.passiveAiMinSeverity.name
         refreshPassiveAiStatus()
         
         // Active AI Scanner settings
@@ -746,8 +745,8 @@ class SettingsPanel(
         activeAiMaxPayloadsSpinner.value = updated.activeAiMaxPayloadsPerPoint
         activeAiTimeoutSpinner.value = updated.activeAiTimeoutSeconds
         activeAiDelaySpinner.value = updated.activeAiRequestDelayMs
-        activeAiRiskLevelCombo.selectedItem = updated.activeAiMaxRiskLevel
-        activeAiScanModeCombo.selectedItem = updated.activeAiScanMode
+        activeAiRiskLevelCombo.selectedItem = updated.activeAiMaxRiskLevel.name
+        activeAiScanModeCombo.selectedItem = updated.activeAiScanMode.name
         activeAiUseCollaborator.isSelected = updated.activeAiUseCollaborator
         updateActiveRiskDescription()
         refreshActiveAiStatus()
@@ -781,15 +780,16 @@ class SettingsPanel(
         activeAiScanner.maxPayloadsPerPoint = updated.activeAiMaxPayloadsPerPoint
         activeAiScanner.timeoutSeconds = updated.activeAiTimeoutSeconds
         activeAiScanner.requestDelayMs = updated.activeAiRequestDelayMs.toLong()
-        activeAiScanner.maxRiskLevel = com.six2dez.burp.aiagent.scanner.PayloadRisk.fromString(updated.activeAiMaxRiskLevel)
+        activeAiScanner.maxRiskLevel = updated.activeAiMaxRiskLevel
         activeAiScanner.scopeOnly = updated.activeAiScopeOnly
-        activeAiScanner.scanMode = com.six2dez.burp.aiagent.scanner.ScanMode.fromString(updated.activeAiScanMode)
+        activeAiScanner.scanMode = updated.activeAiScanMode
         activeAiScanner.useCollaborator = updated.activeAiUseCollaborator
         activeAiScanner.setEnabled(updated.activeAiEnabled)
         
         api.logging().logToOutput("AI Agent settings saved.")
         refreshPassiveAiStatus()
         refreshActiveAiStatus()
+        updateProfileWarnings()
     }
 
     private fun applyMcpToolToggles(toggles: Map<String, Boolean>) {
@@ -963,125 +963,45 @@ class SettingsPanel(
     }
 
     private fun helpSection(): JPanel {
-        val body = JPanel(BorderLayout())
-        body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
-        val helpHtml = """
-            <html>
-              <body style="font-family: sans-serif; font-size: 12px;">
-                <b>Burp AI Agent - Quick Start</b><br/>
-                1. Toggle MCP on in the top bar.<br/>
-                2. Select your AI backend.<br/>
-                3. Right-click requests/issues for AI analysis.<br/>
-                4. Enable passive/active scanners for automated testing.<br/><br/>
-                <b>Full documentation:</b>
-                <a href="https://burp-ai-agent.six2dez.com/">Plugin Documentation</a><br/><br/>
-                <b>Privacy:</b> STRICT (hosts anonymized) | BALANCED (hosts visible) | OFF (raw data)
-              </body>
-            </html>
-        """.trimIndent()
-        val helpPane = JEditorPane("text/html", helpHtml)
-        helpPane.isEditable = false
-        helpPane.isOpaque = false
-        helpPane.border = EmptyBorder(6, 8, 8, 8)
-        helpPane.addHyperlinkListener { event ->
-            if (event.eventType == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
-                try {
-                    if (java.awt.Desktop.isDesktopSupported()) {
-                        java.awt.Desktop.getDesktop().browse(event.url.toURI())
-                    } else {
-                        JOptionPane.showMessageDialog(dialogParentComponent(), "Open this URL in your browser: ${event.url}", "Help", JOptionPane.INFORMATION_MESSAGE)
-                    }
-                } catch (_: Exception) {
-                    JOptionPane.showMessageDialog(dialogParentComponent(), "Open this URL in your browser: ${event.url}", "Help", JOptionPane.INFORMATION_MESSAGE)
-                }
-            }
-        }
-        body.add(helpPane, BorderLayout.CENTER)
+        return HelpConfigPanel(
+            sectionPanel = ::sectionPanel,
+            dialogParentProvider = ::dialogParentComponent
+        ).build()
+    }
 
-        return sectionPanel(
-            title = "Help",
-            subtitle = "Quick start and documentation links.",
-            content = body
-        )
+    private fun privacySection(): JPanel {
+        return PrivacyConfigPanel(
+            sectionPanel = ::sectionPanel,
+            formGrid = ::formGrid,
+            addRowFull = ::addRowFull,
+            addSpacerRow = ::addSpacerRow,
+            privacyMode = privacyMode,
+            auditEnabled = auditEnabled,
+            autoRestart = autoRestart,
+            determinism = determinism,
+            rotateSaltBtn = rotateSaltBtn,
+            privacyWarning = privacyWarning,
+            privacyActiveWarning = privacyActiveWarning
+        ).build()
     }
 
     private fun passiveAiScannerSection(): JPanel {
-        val body = JPanel(BorderLayout())
-        body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
-
-        // Style components
-        passiveAiEnabled.font = UiTheme.Typography.body
-        passiveAiEnabled.background = UiTheme.Colors.surface
-        passiveAiEnabled.foreground = UiTheme.Colors.onSurface
-        passiveAiEnabled.toolTipText = "Automatically analyze proxy traffic using AI and create Burp issues for findings."
-
-        passiveAiScopeOnly.font = UiTheme.Typography.body
-        passiveAiScopeOnly.background = UiTheme.Colors.surface
-        passiveAiScopeOnly.foreground = UiTheme.Colors.onSurface
-        passiveAiScopeOnly.toolTipText = "Only analyze requests that are in the defined target scope."
-
-        passiveAiRateSpinner.font = UiTheme.Typography.body
-        passiveAiRateSpinner.toolTipText = "Minimum seconds between AI analyses (rate limiting)."
-
-        passiveAiMaxSizeSpinner.font = UiTheme.Typography.body
-        passiveAiMaxSizeSpinner.toolTipText = "Maximum response size in KB to analyze."
-
-        passiveAiMinSeverityCombo.font = UiTheme.Typography.body
-        passiveAiMinSeverityCombo.background = UiTheme.Colors.surface
-        passiveAiMinSeverityCombo.toolTipText = "Only report findings at or above this severity level."
-
-        passiveAiStatusLabel.font = UiTheme.Typography.body
-        passiveAiStatusLabel.foreground = UiTheme.Colors.onSurfaceVariant
-
-        passiveAiViewFindings.font = UiTheme.Typography.label
-        passiveAiViewFindings.background = UiTheme.Colors.surface
-        passiveAiViewFindings.foreground = UiTheme.Colors.primary
-        passiveAiViewFindings.border = EmptyBorder(6, 10, 6, 10)
-        passiveAiViewFindings.isFocusPainted = false
-
-        scannerTriageButton.font = UiTheme.Typography.label
-        scannerTriageButton.background = UiTheme.Colors.surface
-        scannerTriageButton.foreground = UiTheme.Colors.primary
-        scannerTriageButton.border = EmptyBorder(6, 10, 6, 10)
-        scannerTriageButton.isFocusPainted = false
-
-        passiveAiResetStats.font = UiTheme.Typography.label
-        passiveAiResetStats.background = UiTheme.Colors.surface
-        passiveAiResetStats.foreground = UiTheme.Colors.primary
-        passiveAiResetStats.border = LineBorder(UiTheme.Colors.outline, 1, true)
-        passiveAiResetStats.isFocusPainted = false
-
-        val grid = formGrid()
-        addRowFull(grid, "Enable scanner", passiveAiEnabled)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "In-scope only", passiveAiScopeOnly)
-        addSpacerRow(grid, 4)
-        addRowPair(grid, "Rate limit (sec)", passiveAiRateSpinner, "Max size (KB)", passiveAiMaxSizeSpinner)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Min severity", passiveAiMinSeverityCombo)
-        addSpacerRow(grid, 8)
-        addRowFull(grid, "Status", passiveAiStatusLabel)
-        addSpacerRow(grid, 4)
-        
-        val actionsPanel = JPanel()
-        actionsPanel.layout = javax.swing.BoxLayout(actionsPanel, javax.swing.BoxLayout.X_AXIS)
-        actionsPanel.background = UiTheme.Colors.surface
-        actionsPanel.add(passiveAiViewFindings)
-        actionsPanel.add(Box.createRigidArea(java.awt.Dimension(8, 0)))
-        actionsPanel.add(scannerTriageButton)
-        actionsPanel.add(Box.createRigidArea(java.awt.Dimension(8, 0)))
-        actionsPanel.add(passiveAiResetStats)
-        addRowFull(grid, "Actions", actionsPanel)
-
-        body.add(grid, BorderLayout.CENTER)
-
-        return sectionPanel(
-            title = "AI Passive Scanner",
-            subtitle = "Automatically analyze proxy traffic for vulnerabilities (XSS, SQLi, IDOR, BOLA, BAC, etc.)",
-            content = body
-        )
+        return PassiveScanConfigPanel(
+            sectionPanel = ::sectionPanel,
+            formGrid = ::formGrid,
+            addRowFull = ::addRowFull,
+            addRowPair = ::addRowPair,
+            addSpacerRow = ::addSpacerRow,
+            passiveAiEnabled = passiveAiEnabled,
+            passiveAiScopeOnly = passiveAiScopeOnly,
+            passiveAiRateSpinner = passiveAiRateSpinner,
+            passiveAiMaxSizeSpinner = passiveAiMaxSizeSpinner,
+            passiveAiMinSeverityCombo = passiveAiMinSeverityCombo,
+            passiveAiStatusLabel = passiveAiStatusLabel,
+            passiveAiViewFindings = passiveAiViewFindings,
+            scannerTriageButton = scannerTriageButton,
+            passiveAiResetStats = passiveAiResetStats
+        ).build()
     }
 
     private fun refreshPassiveAiStatus() {
@@ -1298,112 +1218,28 @@ class SettingsPanel(
     }
 
     private fun activeAiScannerSection(): JPanel {
-        val body = JPanel(BorderLayout())
-        body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
-
-        // Style components
-        activeAiEnabled.font = UiTheme.Typography.body
-        activeAiEnabled.background = UiTheme.Colors.surface
-        activeAiEnabled.foreground = UiTheme.Colors.onSurface
-        activeAiEnabled.toolTipText = "Enable active testing to confirm vulnerabilities detected by passive scanning."
-
-        activeAiScopeOnly.font = UiTheme.Typography.body
-        activeAiScopeOnly.background = UiTheme.Colors.surface
-        activeAiScopeOnly.foreground = UiTheme.Colors.onSurface
-        activeAiScopeOnly.toolTipText = "Only test requests that are in the defined target scope."
-
-        activeAiAutoFromPassive.font = UiTheme.Typography.body
-        activeAiAutoFromPassive.background = UiTheme.Colors.surface
-        activeAiAutoFromPassive.foreground = UiTheme.Colors.onSurface
-        activeAiAutoFromPassive.toolTipText = "Automatically queue passive scanner findings for active testing."
-
-        activeAiMaxConcurrentSpinner.font = UiTheme.Typography.body
-        activeAiMaxConcurrentSpinner.toolTipText = "Maximum number of concurrent active scans."
-
-        activeAiMaxPayloadsSpinner.font = UiTheme.Typography.body
-        activeAiMaxPayloadsSpinner.toolTipText = "Maximum payloads to test per injection point."
-
-        activeAiTimeoutSpinner.font = UiTheme.Typography.body
-        activeAiTimeoutSpinner.toolTipText = "Request timeout in seconds."
-
-        activeAiDelaySpinner.font = UiTheme.Typography.body
-        activeAiDelaySpinner.toolTipText = "Delay between requests in milliseconds (rate limiting)."
-
-        activeAiRiskLevelCombo.font = UiTheme.Typography.body
-        activeAiRiskLevelCombo.background = UiTheme.Colors.surface
-        activeAiRiskLevelCombo.toolTipText = "SAFE: read-only tests. MODERATE: may read data. DANGEROUS: may modify data."
-
-        activeAiRiskDescription.font = UiTheme.Typography.body
-        activeAiRiskDescription.foreground = UiTheme.Colors.onSurfaceVariant
-
-        activeAiScanModeCombo.font = UiTheme.Typography.body
-        activeAiScanModeCombo.background = UiTheme.Colors.surface
-        activeAiScanModeCombo.toolTipText = "BUG_BOUNTY: high-impact only. PENTEST: broad coverage. FULL: all classes."
-
-        activeAiUseCollaborator.font = UiTheme.Typography.body
-        activeAiUseCollaborator.background = UiTheme.Colors.surface
-        activeAiUseCollaborator.foreground = UiTheme.Colors.onSurface
-        activeAiUseCollaborator.toolTipText = "Use Burp Collaborator for SSRF confirmation (out-of-band)."
-
-        activeAiStatusLabel.font = UiTheme.Typography.body
-        activeAiStatusLabel.foreground = UiTheme.Colors.onSurfaceVariant
-
-        activeAiViewFindings.font = UiTheme.Typography.label
-        activeAiViewFindings.background = UiTheme.Colors.surface
-        activeAiViewFindings.foreground = UiTheme.Colors.primary
-        activeAiViewFindings.border = EmptyBorder(6, 10, 6, 10)
-        activeAiViewFindings.isFocusPainted = false
-
-        activeAiClearQueue.font = UiTheme.Typography.label
-        activeAiClearQueue.background = UiTheme.Colors.surface
-        activeAiClearQueue.foreground = UiTheme.Colors.primary
-        activeAiClearQueue.border = LineBorder(UiTheme.Colors.outline, 1, true)
-        activeAiClearQueue.isFocusPainted = false
-
-        activeAiResetStats.font = UiTheme.Typography.label
-        activeAiResetStats.background = UiTheme.Colors.surface
-        activeAiResetStats.foreground = UiTheme.Colors.primary
-        activeAiResetStats.border = LineBorder(UiTheme.Colors.outline, 1, true)
-        activeAiResetStats.isFocusPainted = false
-
-        val grid = formGrid()
-        addRowFull(grid, "Enable scanner", activeAiEnabled)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "In-scope only", activeAiScopeOnly)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Auto-queue findings", activeAiAutoFromPassive)
-        addSpacerRow(grid, 4)
-        addRowPair(grid, "Concurrent scans", activeAiMaxConcurrentSpinner, "Max payloads", activeAiMaxPayloadsSpinner)
-        addSpacerRow(grid, 4)
-        addRowPair(grid, "Timeout (sec)", activeAiTimeoutSpinner, "Delay (ms)", activeAiDelaySpinner)
-        addSpacerRow(grid, 4)
-        addRowPair(grid, "Max risk level", activeAiRiskLevelCombo, "Scan mode", activeAiScanModeCombo)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Risk level details", activeAiRiskDescription)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "SSRF OAST", activeAiUseCollaborator)
-        addSpacerRow(grid, 8)
-        addRowFull(grid, "Status", activeAiStatusLabel)
-        addSpacerRow(grid, 4)
-
-        val actionsPanel = JPanel()
-        actionsPanel.layout = javax.swing.BoxLayout(actionsPanel, javax.swing.BoxLayout.X_AXIS)
-        actionsPanel.background = UiTheme.Colors.surface
-        actionsPanel.add(activeAiViewFindings)
-        actionsPanel.add(Box.createRigidArea(java.awt.Dimension(8, 0)))
-        actionsPanel.add(activeAiClearQueue)
-        actionsPanel.add(Box.createRigidArea(java.awt.Dimension(8, 0)))
-        actionsPanel.add(activeAiResetStats)
-        addRowFull(grid, "Actions", actionsPanel)
-
-        body.add(grid, BorderLayout.CENTER)
-
-        return sectionPanel(
-            title = "AI Active Scanner",
-            subtitle = "Confirm vulnerabilities by sending test payloads (SQLi, XSS, LFI, CMDI, SSRF, etc.)",
-            content = body
-        )
+        return ActiveScanConfigPanel(
+            sectionPanel = ::sectionPanel,
+            formGrid = ::formGrid,
+            addRowFull = ::addRowFull,
+            addRowPair = ::addRowPair,
+            addSpacerRow = ::addSpacerRow,
+            activeAiEnabled = activeAiEnabled,
+            activeAiScopeOnly = activeAiScopeOnly,
+            activeAiAutoFromPassive = activeAiAutoFromPassive,
+            activeAiMaxConcurrentSpinner = activeAiMaxConcurrentSpinner,
+            activeAiMaxPayloadsSpinner = activeAiMaxPayloadsSpinner,
+            activeAiTimeoutSpinner = activeAiTimeoutSpinner,
+            activeAiDelaySpinner = activeAiDelaySpinner,
+            activeAiRiskLevelCombo = activeAiRiskLevelCombo,
+            activeAiScanModeCombo = activeAiScanModeCombo,
+            activeAiUseCollaborator = activeAiUseCollaborator,
+            activeAiRiskDescription = activeAiRiskDescription,
+            activeAiStatusLabel = activeAiStatusLabel,
+            activeAiViewFindings = activeAiViewFindings,
+            activeAiClearQueue = activeAiClearQueue,
+            activeAiResetStats = activeAiResetStats
+        ).build()
     }
 
     private fun updateActiveRiskDescription() {
@@ -1446,100 +1282,53 @@ class SettingsPanel(
         activeAiScanner.maxPayloadsPerPoint = (activeAiMaxPayloadsSpinner.value as? Int) ?: 10
         activeAiScanner.timeoutSeconds = (activeAiTimeoutSpinner.value as? Int) ?: 30
         activeAiScanner.requestDelayMs = ((activeAiDelaySpinner.value as? Int) ?: 100).toLong()
-        activeAiScanner.maxRiskLevel = com.six2dez.burp.aiagent.scanner.PayloadRisk.fromString(
-            activeAiRiskLevelCombo.selectedItem as? String ?: "SAFE"
-        )
+        activeAiScanner.maxRiskLevel = PayloadRisk.fromString(activeAiRiskLevelCombo.selectedItem as? String)
         activeAiScanner.scopeOnly = activeAiScopeOnly.isSelected
-        activeAiScanner.scanMode = com.six2dez.burp.aiagent.scanner.ScanMode.fromString(
-            activeAiScanModeCombo.selectedItem as? String ?: "FULL"
-        )
+        activeAiScanner.scanMode = ScanMode.fromString(activeAiScanModeCombo.selectedItem as? String)
         activeAiScanner.useCollaborator = activeAiUseCollaborator.isSelected
         activeAiScanner.setEnabled(activeAiEnabled.isSelected)
         refreshActiveAiStatus()
     }
 
     private fun promptSection(): JPanel {
-        val body = JPanel(BorderLayout())
-        body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
-
-        val content = JPanel()
-        content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
-        content.background = UiTheme.Colors.surface
-
-        val requestTitle = JLabel("Request prompts")
-        requestTitle.font = UiTheme.Typography.label
-        requestTitle.foreground = UiTheme.Colors.onSurfaceVariant
-        requestTitle.border = EmptyBorder(0, 0, 6, 0)
-        content.add(requestTitle)
-
-        val requestGrid = formGrid()
-        addRowFull(requestGrid, "Find vulnerabilities", JScrollPane(promptRequest))
-        addRowFull(requestGrid, "Analyze this request", JScrollPane(promptSummary))
-        addRowFull(requestGrid, "Explain JS", JScrollPane(promptJs))
-        addRowFull(requestGrid, "Access control", JScrollPane(promptAccessControl))
-        addRowFull(requestGrid, "Login sequence", JScrollPane(promptLoginSequence))
-        content.add(requestGrid)
-
-        val issueTitle = JLabel("Issue prompts")
-        issueTitle.font = UiTheme.Typography.label
-        issueTitle.foreground = UiTheme.Colors.onSurfaceVariant
-        issueTitle.border = EmptyBorder(12, 0, 6, 0)
-        content.add(issueTitle)
-
-        val issueGrid = formGrid()
-        addRowFull(issueGrid, "Analyze this issue", JScrollPane(promptIssueAnalyze))
-        addRowFull(issueGrid, "Generate PoC & validate", JScrollPane(promptIssuePoc))
-        addRowFull(issueGrid, "Impact & severity", JScrollPane(promptIssueImpact))
-        addRowFull(issueGrid, "Full report", JScrollPane(promptIssueFull))
-        content.add(issueGrid)
-
-        body.add(content, BorderLayout.CENTER)
-        return sectionPanel(
-            title = "Prompt Templates",
-            subtitle = "Edit the default prompts used by context actions.",
-            content = body
-        )
+        return PromptConfigPanel(
+            sectionPanel = ::sectionPanel,
+            formGrid = ::formGrid,
+            addRowFull = ::addRowFull,
+            promptRequest = promptRequest,
+            promptSummary = promptSummary,
+            promptJs = promptJs,
+            promptAccessControl = promptAccessControl,
+            promptLoginSequence = promptLoginSequence,
+            promptIssueAnalyze = promptIssueAnalyze,
+            promptIssuePoc = promptIssuePoc,
+            promptIssueImpact = promptIssueImpact,
+            promptIssueFull = promptIssueFull
+        ).build()
     }
 
     private fun mcpSection(): JPanel {
-        val body = JPanel(BorderLayout())
-        body.background = UiTheme.Colors.surface
-        val wrapper = sectionPanel(
-            title = "MCP Server",
-            subtitle = "Built-in MCP server (SSE + optional stdio bridge).",
-            content = body
-        )
-
-        val grid = formGrid()
-        addRowFull(grid, "Enabled", mcpEnabled)
-        addSpacerRow(grid, 4)
-        addRowPair(grid, "Host", mcpHost, "Port", mcpPort)
-        addSpacerRow(grid, 4)
-        addRowPair(grid, "External access", mcpExternal, "Stdio bridge", mcpStdio)
-        addSpacerRow(grid, 4)
-        addRowPair(grid, "TLS enabled", mcpTlsEnabled, "Auto-generate TLS", mcpTlsAuto)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "TLS keystore path", mcpKeystorePath)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "TLS keystore password", mcpKeystorePassword)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Token", tokenPanel())
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Quick actions", mcpQuickActions())
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Max concurrent requests", mcpMaxConcurrent)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Max body size (MB)", mcpMaxBodyMb)
-        addSpacerRow(grid, 4)
-        addRowFull(grid, "Unsafe mode", mcpUnsafe)
-        addSpacerRow(grid, 6)
-
-        val container = JPanel(BorderLayout())
-        container.background = UiTheme.Colors.surface
-        container.add(grid, BorderLayout.NORTH)
-        body.add(container, BorderLayout.CENTER)
-        return wrapper
+        return McpConfigPanel(
+            sectionPanel = ::sectionPanel,
+            formGrid = ::formGrid,
+            addRowFull = ::addRowFull,
+            addRowPair = ::addRowPair,
+            addSpacerRow = ::addSpacerRow,
+            mcpEnabled = mcpEnabled,
+            mcpHost = mcpHost,
+            mcpPort = mcpPort,
+            mcpExternal = mcpExternal,
+            mcpStdio = mcpStdio,
+            mcpTlsEnabled = mcpTlsEnabled,
+            mcpTlsAuto = mcpTlsAuto,
+            mcpKeystorePath = mcpKeystorePath,
+            mcpKeystorePassword = mcpKeystorePassword,
+            mcpMaxConcurrent = mcpMaxConcurrent,
+            mcpMaxBodyMb = mcpMaxBodyMb,
+            mcpUnsafe = mcpUnsafe,
+            tokenPanelFactory = ::tokenPanel,
+            quickActionsFactory = ::mcpQuickActions
+        ).build()
     }
 
     private fun tokenPanel(): JPanel {
@@ -1712,6 +1501,7 @@ class SettingsPanel(
                 description
             }
         }
+        updateProfileWarnings()
     }
 
     private fun updatePrivacyWarnings() {
@@ -1735,6 +1525,38 @@ class SettingsPanel(
 
     private fun collectMcpToolToggles(): Map<String, Boolean> {
         return mcpToolCheckboxes.mapValues { it.value.isSelected }
+    }
+
+    private fun updateProfileWarnings() {
+        val profile = (profilePicker.selectedItem as? String)?.trim().orEmpty()
+        if (profile.isBlank()) {
+            profileWarningLabel.text = ""
+            profileWarningLabel.isVisible = false
+            return
+        }
+        val warnings = AgentProfileLoader.validateProfile(profile, availableMcpTools())
+        if (warnings.isEmpty()) {
+            profileWarningLabel.text = "No profile tool conflicts detected."
+            profileWarningLabel.foreground = UiTheme.Colors.statusRunning
+            profileWarningLabel.isVisible = true
+            return
+        }
+        profileWarningLabel.text = warnings.first()
+        profileWarningLabel.foreground = UiTheme.Colors.statusCrashed
+        profileWarningLabel.isVisible = true
+    }
+
+    private fun availableMcpTools(): Set<String> {
+        val edition = api.burpSuite().version().edition()
+        val unsafeEnabled = mcpUnsafe.isSelected
+        val effectiveToggles = McpToolCatalog.mergeWithDefaults(collectMcpToolToggles())
+        return McpToolCatalog.all()
+            .asSequence()
+            .filter { !it.proOnly || edition == BurpSuiteEdition.PROFESSIONAL }
+            .filter { !it.unsafeOnly || unsafeEnabled }
+            .filter { effectiveToggles[it.id] == true }
+            .map { it.id.lowercase() }
+            .toSet()
     }
 
     private fun applyFieldStyle(field: JTextField) {

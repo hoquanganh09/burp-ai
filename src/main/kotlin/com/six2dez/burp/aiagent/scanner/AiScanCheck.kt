@@ -42,7 +42,7 @@ class AiScanCheck(
             return AuditResult.auditResult(emptyList())
         }
         
-        val maxRisk = PayloadRisk.fromString(settings.activeAiMaxRiskLevel)
+        val maxRisk = settings.activeAiMaxRiskLevel
         val issues = mutableListOf<AuditIssue>()
         
         // Determine which vulnerability classes to test based on insertion point
@@ -135,7 +135,7 @@ class AiScanCheck(
         }
         
         val filtered = classes.distinct().filterNot { it in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES }
-        val mode = ScanMode.fromString(getSettings().activeAiScanMode)
+        val mode = getSettings().activeAiScanMode
         return filtered.filter { ScanPolicy.isAllowedForMode(mode, it) }
     }
 
@@ -201,13 +201,13 @@ class AiScanCheck(
         return AuditIssue.auditIssue(
             "[AI Active] ${vulnClass.name} (Burp Scanner)",
             buildDetail(insertionPoint, payload, evidence),
-            getRemediation(vulnClass),
+            ScannerIssueSupport.remediation(vulnClass),
             baseRequestResponse.request().url(),
-            mapSeverity(vulnClass),
+            ScannerIssueSupport.mapSeverity(vulnClass),
             mapConfidence(payload),
             null,  // background
             null,  // remediationBackground  
-            mapSeverity(vulnClass),
+            ScannerIssueSupport.mapSeverity(vulnClass),
             listOf(baseRequestResponse, attackRequestResponse)
         )
     }
@@ -287,42 +287,6 @@ _(Confirmed via active exploitation testing integrated with Burp Scanner)_
         """.trim()
     }
 
-    private fun mapSeverity(vulnClass: VulnClass): AuditIssueSeverity {
-        return when (vulnClass) {
-            // HIGH - RCE, data theft potential, account takeover
-            VulnClass.SQLI, VulnClass.CMDI, VulnClass.SSTI, VulnClass.XXE,
-            VulnClass.DESERIALIZATION, VulnClass.REQUEST_SMUGGLING, VulnClass.RFI, VulnClass.LDAP_INJECTION,
-            VulnClass.XPATH_INJECTION, VulnClass.NOSQL_INJECTION,
-            VulnClass.ACCOUNT_TAKEOVER, VulnClass.MFA_BYPASS,
-            VulnClass.OAUTH_MISCONFIGURATION, VulnClass.GIT_EXPOSURE,
-            VulnClass.SUBDOMAIN_TAKEOVER, VulnClass.HOST_HEADER_INJECTION,
-            VulnClass.CACHE_POISONING -> AuditIssueSeverity.HIGH
-
-            // MEDIUM - Data exposure, access control issues
-            VulnClass.XSS_REFLECTED, VulnClass.XSS_STORED, VulnClass.XSS_DOM,
-            VulnClass.LFI, VulnClass.SSRF, VulnClass.IDOR, VulnClass.PATH_TRAVERSAL,
-            VulnClass.BOLA, VulnClass.BFLA, VulnClass.BAC_HORIZONTAL, VulnClass.BAC_VERTICAL,
-            VulnClass.MASS_ASSIGNMENT, VulnClass.AUTH_BYPASS, VulnClass.SESSION_FIXATION,
-            VulnClass.GRAPHQL_INJECTION, VulnClass.STACK_TRACE_EXPOSURE,
-            VulnClass.SOURCEMAP_DISCLOSURE, VulnClass.BACKUP_DISCLOSURE,
-            VulnClass.DEBUG_EXPOSURE, VulnClass.S3_MISCONFIGURATION,
-            VulnClass.CACHE_DECEPTION, VulnClass.PRICE_MANIPULATION,
-            VulnClass.RACE_CONDITION_TOCTOU, VulnClass.EMAIL_HEADER_INJECTION,
-            VulnClass.API_VERSION_BYPASS, VulnClass.UNRESTRICTED_FILE_UPLOAD -> AuditIssueSeverity.MEDIUM
-
-            // LOW - Info disclosure, minor issues
-            VulnClass.OPEN_REDIRECT, VulnClass.HEADER_INJECTION,
-            VulnClass.CRLF_INJECTION, VulnClass.JWT_WEAKNESS,
-            VulnClass.RACE_CONDITION, VulnClass.BUSINESS_LOGIC,
-            VulnClass.CORS_MISCONFIGURATION, VulnClass.DIRECTORY_LISTING,
-            VulnClass.DEBUG_ENDPOINT, VulnClass.VERSION_DISCLOSURE,
-            VulnClass.MISSING_SECURITY_HEADERS, VulnClass.VERBOSE_ERROR,
-            VulnClass.INSECURE_COOKIE, VulnClass.SENSITIVE_DATA_URL,
-            VulnClass.WEAK_CRYPTO, VulnClass.LOG_INJECTION, VulnClass.CSRF,
-            VulnClass.RATE_LIMIT_BYPASS, VulnClass.WEAK_SESSION_TOKEN -> AuditIssueSeverity.LOW
-        }
-    }
-
     private fun mapConfidence(payload: Payload): AuditIssueConfidence {
         return when (payload.detectionMethod) {
             DetectionMethod.ERROR_BASED -> AuditIssueConfidence.CERTAIN
@@ -334,64 +298,4 @@ _(Confirmed via active exploitation testing integrated with Burp Scanner)_
         }
     }
 
-    private fun getRemediation(vulnClass: VulnClass): String {
-        return when (vulnClass) {
-            VulnClass.SQLI -> "Use parameterized queries."
-            VulnClass.XSS_REFLECTED, VulnClass.XSS_STORED, VulnClass.XSS_DOM -> "Encode output. Use CSP."
-            VulnClass.LFI, VulnClass.PATH_TRAVERSAL -> "Validate file paths. Use allowlists."
-            VulnClass.RFI -> "Disable remote file inclusion."
-            VulnClass.SSTI -> "Sandbox template execution."
-            VulnClass.CMDI -> "Use strict allowlists."
-            VulnClass.SSRF -> "Block internal networks."
-            VulnClass.IDOR, VulnClass.BOLA -> "Check authorization."
-            VulnClass.BFLA, VulnClass.BAC_HORIZONTAL, VulnClass.BAC_VERTICAL -> "Implement RBAC."
-            VulnClass.MASS_ASSIGNMENT -> "Use field allowlists."
-            VulnClass.OPEN_REDIRECT -> "Validate redirect URLs."
-            VulnClass.XXE -> "Disable external entities."
-            VulnClass.HEADER_INJECTION, VulnClass.CRLF_INJECTION -> "Strip CR/LF."
-            VulnClass.DESERIALIZATION -> "Avoid untrusted data."
-            VulnClass.REQUEST_SMUGGLING -> "Normalize conflicting Content-Length/Transfer-Encoding headers."
-            VulnClass.CSRF -> "Use anti-CSRF tokens and SameSite cookies."
-            VulnClass.UNRESTRICTED_FILE_UPLOAD -> "Restrict file types and store outside web root."
-            VulnClass.JWT_WEAKNESS -> "Use strong algorithms."
-            VulnClass.LDAP_INJECTION -> "Parameterize LDAP queries."
-            VulnClass.XPATH_INJECTION -> "Parameterize XPath queries."
-            VulnClass.AUTH_BYPASS -> "Check authentication."
-            VulnClass.RACE_CONDITION -> "Use locking."
-            VulnClass.BUSINESS_LOGIC -> "Validate business rules."
-            VulnClass.NOSQL_INJECTION -> "Sanitize input. Disable JS."
-            VulnClass.GRAPHQL_INJECTION -> "Disable introspection."
-            VulnClass.LOG_INJECTION -> "Sanitize logs."
-            VulnClass.CORS_MISCONFIGURATION -> "Use explicit origin allowlist."
-            VulnClass.DIRECTORY_LISTING -> "Disable listing."
-            VulnClass.DEBUG_ENDPOINT -> "Disable debug in prod."
-            VulnClass.STACK_TRACE_EXPOSURE -> "Use custom error pages."
-            VulnClass.VERSION_DISCLOSURE -> "Hide version headers."
-            VulnClass.MISSING_SECURITY_HEADERS -> "Add security headers."
-            VulnClass.VERBOSE_ERROR -> "Use generic errors."
-            VulnClass.INSECURE_COOKIE -> "Set Secure/HttpOnly flags."
-            VulnClass.SENSITIVE_DATA_URL -> "Don't put secrets in URLs."
-            VulnClass.WEAK_CRYPTO -> "Use modern algorithms."
-            VulnClass.SESSION_FIXATION -> "Regenerate session ID."
-            VulnClass.WEAK_SESSION_TOKEN -> "Use secure random tokens."
-            VulnClass.RATE_LIMIT_BYPASS -> "Implement robust rate limiting."
-            // New vulnerability classes
-            VulnClass.ACCOUNT_TAKEOVER -> "Use secure password reset with short-lived tokens."
-            VulnClass.HOST_HEADER_INJECTION -> "Validate Host header. Use hardcoded domains."
-            VulnClass.EMAIL_HEADER_INJECTION -> "Strip newlines from email inputs."
-            VulnClass.OAUTH_MISCONFIGURATION -> "Strictly validate redirect_uri."
-            VulnClass.MFA_BYPASS -> "Rate limit MFA. Don't expose codes."
-            VulnClass.PRICE_MANIPULATION -> "Server-side price validation."
-            VulnClass.RACE_CONDITION_TOCTOU -> "Use database locking."
-            VulnClass.CACHE_POISONING -> "Don't use unkeyed headers."
-            VulnClass.CACHE_DECEPTION -> "Don't cache by extension alone."
-            VulnClass.SOURCEMAP_DISCLOSURE -> "Remove source maps from production."
-            VulnClass.GIT_EXPOSURE -> "Block .git directory access."
-            VulnClass.BACKUP_DISCLOSURE -> "Remove backup files from web root."
-            VulnClass.DEBUG_EXPOSURE -> "Disable debug endpoints in production."
-            VulnClass.S3_MISCONFIGURATION -> "Use private bucket policies."
-            VulnClass.SUBDOMAIN_TAKEOVER -> "Remove dangling DNS records."
-            VulnClass.API_VERSION_BYPASS -> "Deprecate old API versions completely."
-        }
-    }
 }

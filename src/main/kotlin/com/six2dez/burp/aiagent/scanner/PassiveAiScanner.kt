@@ -9,15 +9,23 @@ import burp.api.montoya.proxy.http.ProxyResponseToBeSentAction
 import burp.api.montoya.scanner.audit.issues.AuditIssue
 import burp.api.montoya.scanner.audit.issues.AuditIssueConfidence
 import burp.api.montoya.scanner.audit.issues.AuditIssueSeverity
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.config.Defaults
+import com.six2dez.burp.aiagent.redact.Redaction
+import com.six2dez.burp.aiagent.redact.RedactionPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.util.IssueText
+import java.net.URI
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 data class PassiveAiFinding(
     val timestamp: Long,
@@ -49,12 +57,12 @@ class PassiveAiScanner(
     private val issuesFound = AtomicInteger(0)
     private val lastAnalysisTime = AtomicLong(0)
     private val lastRequestTime = AtomicLong(0)
-    private val semaphore = Semaphore(1)
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "PassiveAiScanner").apply { isDaemon = true }
     }
-    private val findings = ArrayDeque<PassiveAiFinding>(50)
-    private var registered = false
+    private val findings = ArrayDeque<PassiveAiFinding>(Defaults.FINDINGS_BUFFER_SIZE)
+    private val registered = AtomicBoolean(false)
+    private val jsonMapper = ObjectMapper().registerKotlinModule()
     
     // Reference to active scanner for auto-queueing
     var activeScanner: ActiveAiScanner? = null
@@ -67,15 +75,7 @@ class PassiveAiScanner(
     private val allowedMimeTypes = setOf(
         "html", "json", "javascript", "xml", "text", "unknown", "script"
     )
-    private val headerInjectionAllowlist = setOf(
-        "host",
-        "origin",
-        "referer",
-        "x-forwarded-host",
-        "x-forwarded-for",
-        "x-host",
-        "x-original-host"
-    )
+    private val headerInjectionAllowlist = ScannerUtils.HEADER_INJECTION_ALLOWLIST
     private val csrfTokenRegex = Regex(
         "(csrf|xsrf|anti_csrf|csrfmiddlewaretoken|__requestverificationtoken|token)",
         RegexOption.IGNORE_CASE
@@ -144,9 +144,8 @@ class PassiveAiScanner(
 
     fun setEnabled(on: Boolean) {
         enabled.set(on)
-        if (on && !registered) {
+        if (on && registered.compareAndSet(false, true)) {
             api.proxy().registerResponseHandler(handler)
-            registered = true
             api.logging().logToOutput("[PassiveAiScanner] Enabled - analyzing proxy traffic")
         } else if (!on) {
             api.logging().logToOutput("[PassiveAiScanner] Disabled")
@@ -155,7 +154,7 @@ class PassiveAiScanner(
 
     fun isEnabled(): Boolean = enabled.get()
     
-    private var backendStartAttempted = false
+    private val backendStartAttempted = AtomicBoolean(false)
     
     private fun ensureBackendRunning(settings: AgentSettings): Boolean {
         // Check if supervisor has an active session
@@ -164,21 +163,38 @@ class PassiveAiScanner(
         }
         
         // Try to start the preferred backend (only once per scan batch)
-        if (!backendStartAttempted) {
-            backendStartAttempted = true
+        if (backendStartAttempted.compareAndSet(false, true)) {
             api.logging().logToOutput("[PassiveAiScanner] Starting backend: ${settings.preferredBackendId}")
             val started = supervisor.startOrAttach(settings.preferredBackendId)
             if (started) {
-                api.logging().logToOutput("[PassiveAiScanner] Backend started successfully")
-                // Give it a moment to initialize
-                Thread.sleep(2000)
-                return true
+                val ready = waitForBackendSession(maxWaitMs = 10_000L, pollMs = 200L)
+                if (ready) {
+                    api.logging().logToOutput("[PassiveAiScanner] Backend started successfully")
+                    return true
+                }
+                api.logging().logToError("[PassiveAiScanner] Backend started but session did not become ready in time")
             } else {
                 val error = supervisor.lastStartError()
                 api.logging().logToError("[PassiveAiScanner] Failed to start backend: $error")
             }
         }
         
+        return supervisor.currentSessionId() != null
+    }
+
+    private fun waitForBackendSession(maxWaitMs: Long, pollMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + maxWaitMs.coerceAtLeast(0L)
+        while (System.currentTimeMillis() < deadline) {
+            if (supervisor.currentSessionId() != null) {
+                return true
+            }
+            try {
+                Thread.sleep(pollMs.coerceAtLeast(1L))
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
         return supervisor.currentSessionId() != null
     }
 
@@ -238,7 +254,7 @@ class PassiveAiScanner(
         manualScanTotal.set(total)
         manualScanCompleted.set(0)
         manualScanInProgress.set(true)
-        backendStartAttempted = false  // Reset so we try to start backend for this scan
+        backendStartAttempted.set(false)  // Reset so we try to start backend for this scan
         
         api.logging().logToOutput("[PassiveAiScanner] Manual scan started: $total requests queued")
         
@@ -276,14 +292,10 @@ class PassiveAiScanner(
     }
 
     private fun analyzeInBackground(requestResponse: HttpRequestResponse) {
-        if (!semaphore.tryAcquire()) return
         try {
             doAnalysis(requestResponse)
         } catch (e: Exception) {
             api.logging().logToError("[PassiveAiScanner] Error: ${e.message}")
-        } finally {
-            Thread.sleep((rateLimitSeconds * 1000).toLong())
-            semaphore.release()
         }
     }
 
@@ -314,7 +326,7 @@ class PassiveAiScanner(
                     finding.severity,
                     finding.detail,
                     finding.confidence,
-                    settings.passiveAiMinSeverity,
+                    settings.passiveAiMinSeverity.name,
                     settings,
                     "local"
                 )
@@ -372,9 +384,12 @@ class PassiveAiScanner(
                 .take(10)
                 .toList()
 
-            // Build simple text-based metadata (avoid Jackson classloader issues in Burp)
+            val redactionPolicy = RedactionPolicy.fromMode(settings.privacyMode)
+            val displayUrl = redactUrlForPrompt(request.url(), redactionPolicy, settings.hostAnonymizationSalt)
+
+            // Build simple text-based metadata
             val metadataText = buildString {
-                appendLine("URL: ${request.url()}")
+                appendLine("URL: $displayUrl")
                 appendLine("Path: $urlPath")
                 appendLine("Method: ${request.method()}")
                 appendLine("Status: ${response?.statusCode() ?: 0}")
@@ -418,12 +433,22 @@ class PassiveAiScanner(
                 }
             }
 
-            val prompt = buildAnalysisPrompt(metadataText, settings.passiveAiMinSeverity)
+            val safeMetadataText = if (settings.privacyMode == com.six2dez.burp.aiagent.redact.PrivacyMode.OFF) {
+                metadataText
+            } else {
+                Redaction.apply(
+                    metadataText,
+                    redactionPolicy,
+                    stableHostSalt = settings.hostAnonymizationSalt
+                )
+            }
+
+            val prompt = buildAnalysisPrompt(safeMetadataText, settings.passiveAiMinSeverity.name)
 
             // Send to AI backend
             val responseBuffer = StringBuilder()
-            var completed = false
-            var errorMsg: String? = null
+            val completionLatch = CountDownLatch(1)
+            val errorRef = AtomicReference<String?>(null)
 
             supervisor.send(
                 text = prompt,
@@ -432,26 +457,22 @@ class PassiveAiScanner(
                 determinismMode = settings.determinismMode,
                 onChunk = { chunk -> responseBuffer.append(chunk) },
                 onComplete = { err ->
-                    errorMsg = err?.message
-                    completed = true
+                    errorRef.set(err?.message)
+                    completionLatch.countDown()
                 }
             )
 
-            // Wait for completion (with timeout)
-            val startWait = System.currentTimeMillis()
-            while (!completed && System.currentTimeMillis() - startWait < 90000) {
-                Thread.sleep(100)
-            }
+            val completed = completionLatch.await(Defaults.PASSIVE_SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
 
             requestsAnalyzed.incrementAndGet()
             lastAnalysisTime.set(System.currentTimeMillis())
 
             if (!completed) {
                 api.logging().logToError("[PassiveAiScanner] Timeout for: ${request.url().take(60)}")
-            } else if (errorMsg != null) {
-                api.logging().logToError("[PassiveAiScanner] AI error: $errorMsg")
+            } else if (errorRef.get() != null) {
+                api.logging().logToError("[PassiveAiScanner] AI error: ${errorRef.get()}")
             } else if (responseBuffer.isNotEmpty()) {
-                handleAiResponse(responseBuffer.toString(), requestResponse, settings.passiveAiMinSeverity)
+                handleAiResponse(responseBuffer.toString(), requestResponse, settings.passiveAiMinSeverity.name)
             }
 
             audit.logEvent("passive_ai_scan", mapOf(
@@ -473,109 +494,40 @@ class PassiveAiScanner(
         }
         
         return """
-You are a senior security researcher analyzing HTTP traffic for vulnerabilities.
-ALWAYS respond in English regardless of the language of the analyzed content, requests, or responses.
+### ROLE
+You are a senior security researcher analyzing HTTP traffic.
+Response Language: English.
+
+### TASK
+Analyze the provided HTTP data for vulnerabilities and misconfigurations.
 $severityInstruction
 
-ANALYSIS SCOPE - Look for these vulnerability classes:
+### SCOPE
+1. **Injection**: XSS (Reflected/DOM/Stored), SQLi, CMDI, SSTI, LDAP/XPath.
+2. **Auth & Access**: IDOR, BOLA, BAC (Horizontal/Vertical), Mass Assignment, Broken Auth, JWT Issues, CSRF.
+3. **Info Disclosure**: Sensitive Data (PII, Secrets), Debug Info, Source Code, Git/Backup Files.
+4. **Config**: Missing Headers, CORS, Open Redirect, SSRF, Deserialization, XXE.
+5. **High Value**: Account Takeover, Host/Email Header Injection, OAuth Misconfig, MFA Bypass, Cache Poisoning/Deception, Request Smuggling, Prototype Pollution.
+6. **API**: Version Bypass, GraphQL Introspection.
 
-**Injection Vulnerabilities:**
-- XSS (Reflected): User input reflected in response without proper encoding
-- XSS (DOM-based): Look for dangerous sinks in JS (innerHTML, document.write, eval, location.href assignments)
-- XSS (Stored indicators): User input that might be stored and rendered later
-- SQL Injection: Error messages, DBMS-specific errors, parameter names suggesting queries
-- Command Injection: Parameters that could be passed to system commands (cmd, exec, ping, etc.)
-- Template Injection: Template syntax in responses ( {{ , ${"$"}{  , <%  , etc.) that reflects user input
-- LDAP/XPath Injection: Parameters used in directory/XML queries
+### RULES
+1. **Evidence First**: ONLY report findings with CONCRETE EVIDENCE in the provided data.
+2. **Quality**: Confidence 95-100 (Certain), 85-94 (Firm), <85 (Ignore).
+3. **No Speculation**: Do not report theoretical issues without proof in this specific traffic.
+4. **JSON Output**: Output ONLY a JSON array. If no issues found, output [].
 
-**Authorization & Access Control:**
-- IDOR (Insecure Direct Object Reference): Sequential/predictable IDs, UUIDs in URLs, user-controlled resource references
-- BOLA (Broken Object Level Authorization): API endpoints accessing objects by ID without apparent auth checks
-- BAC (Broken Access Control): 
-  - Admin/privileged endpoints accessible without proper roles
-  - Horizontal privilege escalation (accessing other users' data)
-  - Vertical privilege escalation (accessing admin functions)
-  - Missing function-level access control
-- Mass Assignment: API accepting more parameters than expected (look for user role, admin, isAdmin, etc.)
+### OUTPUT FORMAT
+[
+  {
+    "reasoning": "Step-by-step logic explaining why this is a vulnerability",
+    "title": "Short descriptive title",
+    "severity": "High|Medium|Low|Information",
+    "detail": "Technical description with evidence quotes",
+    "confidence": 0-100
+  }
+]
 
-**Authentication Issues:**
-- Weak session tokens (short, predictable, sequential)
-- Exposed credentials in responses
-- JWT issues (alg:none, weak secrets if detectable, sensitive data in payload)
-- Session fixation indicators
-- Missing secure/httpOnly flags on session cookies
-
-**Information Disclosure:**
-- Sensitive data exposure: API keys, tokens, passwords, private keys
-- Internal IPs, hostnames, paths
-- Stack traces, debug info, verbose errors
-- Version disclosure (server, framework, library versions)
-- Directory listing
-- Source code exposure
-
-**Security Misconfigurations:**
-- Missing security headers (CSP, X-Frame-Options, X-Content-Type-Options, etc.)
-- CORS misconfigurations (ACAO reflects attacker origin with ACAC:true; wildcard with credentials; Vary: Origin expected)
-- Verbose error messages revealing internals
-- Debug endpoints exposed
-- Default credentials indicators
-
-**Other Vulnerabilities:**
-- SSRF indicators: URL parameters fetching external resources
-- Open Redirect: Redirect parameters with user-controlled URLs
-- Path Traversal: File path parameters (../, file=, path=, etc.)
-- Insecure Deserialization indicators
-- XXE indicators in XML processing
-- Race condition indicators (time-sensitive operations)
-- HTTP Request Smuggling indicators (CL+TE, duplicate Content-Length)
-- CSRF risks (state-changing requests without CSRF token and weak SameSite)
-- Unrestricted File Upload indicators (multipart upload returning executable file URL)
-
-**High-Value Bug Bounty Targets:**
-- Account Takeover: Password reset token in URL, predictable tokens, email change without verification
-- Host Header Injection: Host header reflected in response, password reset links with injected host
-- OAuth Misconfiguration: redirect_uri without strict validation, state parameter missing, token in URL
-- MFA/2FA Bypass: 2FA code in response, rate limiting absent, backup codes exposed
-- Cache Poisoning: Unkeyed headers reflected, X-Forwarded-Host reflected, cache headers present
-- Cache Deception: Sensitive data with static file extensions (.css, .js)
-- Price/Quantity Manipulation: Negative values, zero prices, integer overflow in quantities
-- Request Smuggling: Conflicting CL/TE or multiple CL headers
-
-**Information Disclosure (High Value):**
-- Source Map Disclosure: .map files, sourceMappingURL comments, SourceMap headers
-- Git Exposure: /.git/HEAD, /.git/config accessible
-- Backup Files: .bak, .old, .swp, ~ files with source code
-- Debug Endpoints: /actuator, /_profiler, /telescope, /phpinfo.php, /elmah.axd
-- Subdomain Takeover indicators: "NoSuchBucket", "GitHub Pages not found", "Heroku no such app"
-
-**API Security:**
-- API Version Bypass: Old/deprecated API versions still accessible
-- GraphQL Introspection: Schema exposed, batching attacks possible
-
-**DOM Analysis (if JavaScript present):**
-- Dangerous sinks: innerHTML, outerHTML, document.write, eval, setTimeout/setInterval with strings
-- Dangerous sources: location.hash, location.search, document.referrer, postMessage
-- DOM clobbering possibilities
-- Prototype pollution patterns
-
-RULES:
-1. Only report findings with CONCRETE EVIDENCE visible in the data
-2. Do NOT speculate or assume backend behavior you cannot verify
-3. For complex vulns (BOLA, BAC), look for patterns:
-   - API endpoints with object IDs that don't include user context
-   - Missing authorization headers on sensitive endpoints
-   - Inconsistent access patterns
-4. Confidence scoring:
-   - 95-100: Confirmed vulnerability (e.g., XSS payload reflected unencoded, SQL error)
-   - 85-94: Strong evidence (e.g., exposed API key, IDOR pattern with predictable IDs)
-   - <85: Do not report - only report findings with solid evidence
-5. Be specific in detail - include the exact parameter/value/evidence
-6. If nothing suspicious, output []
-
-OUTPUT FORMAT (strict JSON array, no markdown):
-[{"title": "Short title", "severity": "High|Medium|Low|Information", "detail": "Specific evidence found", "confidence": 0-100}]
-
-HTTP TRAFFIC DATA:
+### HTTP DATA
 $metadata
 """.trim()
     }
@@ -591,10 +543,16 @@ $metadata
             val settings = getSettings()
 
             for (item in issues) {
-                val confidence = item["confidence"]?.toIntOrNull() ?: 0
-                val title = (item["title"] ?: "AI Potential Issue").take(120)
-                val rawSeverity = item["severity"] ?: "Information"
-                val detail = item["detail"] ?: "No detail from AI"
+                val confidence = item.confidence ?: 0
+                val title = (item.title ?: "AI Potential Issue").take(120)
+                val rawSeverity = item.severity ?: "Information"
+                val reasoning = item.reasoning ?: ""
+                var detail = item.detail ?: "No detail from AI"
+                
+                if (reasoning.isNotBlank()) {
+                    detail = "Analysis Reasoning: $reasoning\n\n$detail"
+                }
+
                 handleFinding(requestResponse, title, rawSeverity, detail, confidence, minSeverity, settings, "ai")
             }
         } catch (e: Exception) {
@@ -694,7 +652,7 @@ $metadata
             issueCreated = issueCreated
         )
         synchronized(findings) {
-            if (findings.size >= 50) findings.removeFirst()
+            if (findings.size >= Defaults.FINDINGS_BUFFER_SIZE) findings.removeFirst()
             findings.addLast(finding)
         }
     }
@@ -726,7 +684,7 @@ $metadata
         // Map title to VulnClass
         val vulnClass = mapTitleToVulnClass(title) ?: return
         if (vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return
-        if (!ScanPolicy.isAllowedForMode(ScanMode.fromString(settings.activeAiScanMode), vulnClass)) return
+        if (!ScanPolicy.isAllowedForMode(settings.activeAiScanMode, vulnClass)) return
         
         // Extract injection points from the request
         val injectionPoints = extractInjectionPoints(requestResponse)
@@ -994,38 +952,31 @@ $metadata
         )
     }
     
-    private fun parseIssuesJson(json: String): List<Map<String, String>> {
-        // Simple JSON array parser for [{...}, {...}] format
-        val results = mutableListOf<Map<String, String>>()
-        if (!json.trim().startsWith("[")) return results
-        
-        val arrayContent = json.trim().removePrefix("[").removeSuffix("]").trim()
-        if (arrayContent.isBlank()) return results
-        
-        // Split by },{ pattern (objects in array)
-        val objectPattern = Regex("\\{[^{}]*\\}")
-        objectPattern.findAll(arrayContent).forEach { match ->
-            val obj = parseJsonObject(match.value)
-            if (obj.isNotEmpty()) results.add(obj)
+    internal data class AiIssueItem(
+        val reasoning: String? = null,
+        val title: String? = null,
+        val severity: String? = null,
+        val detail: String? = null,
+        val confidence: Int? = null
+    )
+
+    internal fun parseIssuesJson(json: String): List<AiIssueItem> {
+        val root = jsonMapper.readTree(json)
+        if (!root.isArray) return emptyList()
+        return root.mapNotNull { node ->
+            runCatching {
+                AiIssueItem(
+                    reasoning = node.path("reasoning").takeIf { !it.isMissingNode && !it.isNull }?.asText(),
+                    title = node.path("title").takeIf { !it.isMissingNode && !it.isNull }?.asText(),
+                    severity = node.path("severity").takeIf { !it.isMissingNode && !it.isNull }?.asText(),
+                    detail = node.path("detail").takeIf { !it.isMissingNode && !it.isNull }?.asText(),
+                    confidence = node.path("confidence").takeIf { !it.isMissingNode && !it.isNull }?.asInt()
+                )
+            }.getOrNull()
         }
-        return results
-    }
-    
-    private fun parseJsonObject(json: String): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-        val content = json.trim().removePrefix("{").removeSuffix("}").trim()
-        
-        // Match "key": "value" or "key": number patterns
-        val pattern = Regex("\"(\\w+)\"\\s*:\\s*(?:\"([^\"]*)\"|(-?\\d+))")
-        pattern.findAll(content).forEach { match ->
-            val key = match.groupValues[1]
-            val value = match.groupValues[2].ifEmpty { match.groupValues[3] }
-            result[key] = value
-        }
-        return result
     }
 
-    private fun cleanJsonResponse(text: String): String {
+    internal fun cleanJsonResponse(text: String): String {
         if (text.isBlank()) return ""
         var cleaned = text.trim()
         // Remove markdown code blocks
@@ -1043,6 +994,48 @@ $metadata
             "medium" -> AuditIssueSeverity.MEDIUM
             "low" -> AuditIssueSeverity.LOW
             else -> AuditIssueSeverity.INFORMATION
+        }
+    }
+
+    private fun redactUrlForPrompt(rawUrl: String, policy: RedactionPolicy, hostSalt: String): String {
+        return try {
+            val uri = URI(rawUrl)
+            val safeHost = if (!uri.host.isNullOrBlank() && policy.anonymizeHosts) {
+                Redaction.anonymizeHost(uri.host, hostSalt)
+            } else {
+                uri.host
+            }
+            val safeQuery = if (uri.query.isNullOrBlank()) {
+                uri.query
+            } else if (policy.redactTokens) {
+                redactSensitiveQuery(uri.query)
+            } else {
+                uri.query
+            }
+            URI(
+                uri.scheme,
+                uri.userInfo,
+                safeHost,
+                uri.port,
+                uri.path,
+                safeQuery,
+                uri.fragment
+            ).toString()
+        } catch (_: Exception) {
+            rawUrl
+        }
+    }
+
+    private fun redactSensitiveQuery(query: String): String {
+        val sensitiveKey = Regex("(token|key|auth|session|jwt|cookie|password|secret)", RegexOption.IGNORE_CASE)
+        return query.split("&").joinToString("&") { pair ->
+            val separator = pair.indexOf('=')
+            if (separator <= 0) {
+                pair
+            } else {
+                val key = pair.substring(0, separator)
+                if (sensitiveKey.containsMatchIn(key)) "$key=[REDACTED]" else pair
+            }
         }
     }
 }

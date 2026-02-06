@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 class BackendRegistry(private val api: MontoyaApi) {
     private val backends = ConcurrentHashMap<String, AiBackend>()
+    private var externalClassLoader: URLClassLoader? = null
 
     private val externalBackendDir = File(System.getProperty("user.home"), ".burp-ai-agent/backends").also { it.mkdirs() }
 
@@ -24,6 +25,7 @@ class BackendRegistry(private val api: MontoyaApi) {
 
     fun reload() {
         backends.clear()
+        closeExternalClassLoader()
 
         // Built-ins (same extension JAR)
         val builtIns = ServiceLoader.load(AiBackendFactory::class.java).toList()
@@ -60,6 +62,11 @@ class BackendRegistry(private val api: MontoyaApi) {
         .sortedBy { it.displayName }
         .map { it.id }
 
+    fun shutdown() {
+        backends.clear()
+        closeExternalClassLoader()
+    }
+
     private fun loadExternalBackendJars() {
         val jars = externalBackendDir.listFiles { f -> f.isFile && f.extension.lowercase() == "jar" }?.toList().orEmpty()
         if (jars.isEmpty()) return
@@ -70,9 +77,20 @@ class BackendRegistry(private val api: MontoyaApi) {
                 val b = f.create()
                 backends[b.id] = b
             }
+            externalClassLoader = cl
             api.logging().logToOutput("Loaded external backend JARs: ${jars.joinToString { it.name }}")
         } catch (e: Exception) {
             api.logging().logToError("Failed loading external backend JARs: ${e.message}")
+        }
+    }
+
+    private fun closeExternalClassLoader() {
+        val cl = externalClassLoader ?: return
+        externalClassLoader = null
+        try {
+            cl.close()
+        } catch (e: Exception) {
+            api.logging().logToError("Failed closing backend classloader: ${e.message}")
         }
     }
 }

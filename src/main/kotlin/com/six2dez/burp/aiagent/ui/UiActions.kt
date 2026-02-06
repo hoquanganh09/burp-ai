@@ -36,7 +36,6 @@ object UiActions {
         // AI Vulnerability Scan option (Passive)
         val aiScan = JMenuItem("🔍 AI Passive Scan (${targets.size})")
         aiScan.addActionListener {
-            if (!ensureMcpRunning(tab, mcpSupervisor)) return@addActionListener
             val count = passiveAiScanner.manualScan(targets)
             JOptionPane.showMessageDialog(
                 tab.root,
@@ -51,13 +50,46 @@ object UiActions {
         aiActiveScan.addActionListener {
             if (!ensureActiveScannerEnabled(tab, activeAiScanner)) return@addActionListener
             val scanner = activeAiScanner ?: return@addActionListener
+            val validTargets = filterValidTargets(targets)
+            if (validTargets.isEmpty()) {
+                JOptionPane.showMessageDialog(
+                    tab.root,
+                    "No valid HTTP targets found for active scan.",
+                    "AI Active Scan",
+                    JOptionPane.WARNING_MESSAGE
+                )
+                return@addActionListener
+            }
+            val preQueue = scanner.getStatus().queueSize
+            val confirmed = JOptionPane.showConfirmDialog(
+                tab.root,
+                "This will send active test payloads to ${validTargets.size} target(s).\n" +
+                    "Current queue: $preQueue\n\n" +
+                    "Do you want to continue?",
+                "Confirm AI Active Scan",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE
+            )
+            if (confirmed != JOptionPane.YES_OPTION) return@addActionListener
             // Queue all vuln classes for manual scan
-            val count = scanner.manualScan(targets, VulnClass.values().toList())
+            val count = scanner.manualScan(validTargets, VulnClass.values().toList())
+            val postQueue = scanner.getStatus().queueSize
+            if (count == 0) {
+                JOptionPane.showMessageDialog(
+                    tab.root,
+                    "No targets were queued. The active scan queue may be full (max ${scanner.maxQueueSize}) or targets were filtered out.",
+                    "AI Active Scan",
+                    JOptionPane.WARNING_MESSAGE
+                )
+                return@addActionListener
+            }
             JOptionPane.showMessageDialog(
                 tab.root,
                 "Queued $count target(s) for AI active testing.\n\n" +
-                "⚠️ This will send test payloads to the server.\n" +
-                "Confirmed findings will appear in Target → Issues with [AI] Confirmed prefix.",
+                    "Queue size: $preQueue -> $postQueue\n" +
+                    "Queue max: ${scanner.maxQueueSize}\n" +
+                    "⚠️ This will send test payloads to the server.\n" +
+                    "Confirmed findings will appear in Target → Issues with [AI] Confirmed prefix.",
                 "AI Active Scan Started",
                 JOptionPane.INFORMATION_MESSAGE
             )
@@ -282,10 +314,43 @@ object UiActions {
             item.addActionListener {
                 if (!ensureActiveScannerEnabled(tab, activeAiScanner)) return@addActionListener
                 val scanner = activeAiScanner ?: return@addActionListener
-                val count = scanner.manualScan(targets, classes)
+                val validTargets = filterValidTargets(targets)
+                if (validTargets.isEmpty()) {
+                    JOptionPane.showMessageDialog(
+                        tab.root,
+                        "No valid HTTP targets found for active scan.",
+                        "AI Targeted Test",
+                        JOptionPane.WARNING_MESSAGE
+                    )
+                    return@addActionListener
+                }
+                val preQueue = scanner.getStatus().queueSize
+                val confirmed = JOptionPane.showConfirmDialog(
+                    tab.root,
+                    "This will run '$label' active tests on ${validTargets.size} target(s).\n" +
+                        "Current queue: $preQueue\n\n" +
+                        "Do you want to continue?",
+                    "Confirm Targeted Active Test",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+                )
+                if (confirmed != JOptionPane.YES_OPTION) return@addActionListener
+                val count = scanner.manualScan(validTargets, classes)
+                val postQueue = scanner.getStatus().queueSize
+                if (count == 0) {
+                    JOptionPane.showMessageDialog(
+                        tab.root,
+                        "No targets were queued. The active scan queue may be full (max ${scanner.maxQueueSize}) or targets were filtered out.",
+                        "AI Targeted Test",
+                        JOptionPane.WARNING_MESSAGE
+                    )
+                    return@addActionListener
+                }
                 JOptionPane.showMessageDialog(
                     tab.root,
                     "Queued $count target(s) for AI active testing: $label.\n\n" +
+                        "Queue size: $preQueue -> $postQueue\n" +
+                        "Queue max: ${scanner.maxQueueSize}\n" +
                         "⚠️ This will send test payloads to the server.\n" +
                         "Confirmed findings will appear in Target → Issues with [AI] Confirmed prefix.",
                     "AI Targeted Test Started",
@@ -296,5 +361,17 @@ object UiActions {
         }
 
         return menu
+    }
+
+    private fun filterValidTargets(
+        targets: List<burp.api.montoya.http.message.HttpRequestResponse>
+    ): List<burp.api.montoya.http.message.HttpRequestResponse> {
+        return targets.filter { rr ->
+            try {
+                rr.request().url().isNotBlank()
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 }

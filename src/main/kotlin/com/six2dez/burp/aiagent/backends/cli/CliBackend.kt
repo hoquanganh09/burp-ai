@@ -5,6 +5,7 @@ import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.DiagnosableConnection
 import com.six2dez.burp.aiagent.backends.SessionAwareConnection
+import com.six2dez.burp.aiagent.config.Defaults
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.Locale
@@ -39,6 +40,7 @@ class CliBackend(
         private val executor = Executors.newSingleThreadExecutor()
         @Volatile
         private var _cliSessionId: String? = initialCliSessionId
+        private val conversationHistory = mutableListOf<String>() // For stateless CLIs
 
         override fun cliSessionId(): String? = _cliSessionId
 
@@ -51,7 +53,35 @@ class CliBackend(
                 } else {
                     null
                 }
-                val (cmd, stdinText) = buildCommand(text, outputFile)
+
+
+                // Update history and build transcript for stateless CLIs
+                val promptToSend: String
+                val promptFile: java.io.File?
+                if (backendId == "claude-cli" && text.length > Defaults.LARGE_PROMPT_THRESHOLD) {
+                    // For large payloads, write to a temp file and ask Claude to read it.
+                    // This bypasses shell/stdin limits and avoids "Prompt is too long" errors.
+                    val tFile = java.io.File.createTempFile("burp_uv_prompt_", ".txt")
+                    tFile.writeText(text)
+                    promptFile = tFile
+                    promptToSend = "Please process the instructions and data provided in the following file:\n${tFile.absolutePath}"
+                } else {
+                    promptFile = null
+                    synchronized(conversationHistory) {
+                        if (backendId != "claude-cli") {
+                            conversationHistory.add("User: $text")
+                            // Trim history to reasonable size
+                            while (conversationHistory.size > Defaults.MAX_HISTORY_MESSAGES) {
+                                conversationHistory.removeAt(0)
+                            }
+                            promptToSend = conversationHistory.joinToString("\n\n")
+                        } else {
+                            promptToSend = text
+                        }
+                    }
+                }
+
+                val (cmd, stdinText) = buildCommand(promptToSend, outputFile)
                 try {
                     val process = ProcessBuilder(normalizeWindowsCommand(cmd))
                         .apply { environment().putAll(env) }
@@ -93,10 +123,10 @@ class CliBackend(
                                 process.destroyForcibly()
                                 break
                             }
-                            if (System.currentTimeMillis() - start > 120_000) break
+                            if (System.currentTimeMillis() - start > Defaults.CLI_PROCESS_TIMEOUT_SECONDS * 1000L) break
                         }
                     } else {
-                        if (!process.waitFor(120, TimeUnit.SECONDS)) {
+                        if (!process.waitFor(Defaults.CLI_PROCESS_TIMEOUT_SECONDS.toLong(), TimeUnit.SECONDS)) {
                             process.destroyForcibly()
                             try {
                                 readerThread.join(2000)
@@ -137,6 +167,12 @@ class CliBackend(
                         else -> rawOutput.toString().trim()
                     }
                     if (finalMessage.isNotBlank()) {
+                        // Store assistant response in history for stateless CLIs
+                        if (backendId != "claude-cli") {
+                            synchronized(conversationHistory) {
+                                conversationHistory.add("Assistant: $finalMessage")
+                            }
+                        }
                         onChunk(finalMessage)
                     }
                     onComplete(null)
@@ -144,7 +180,10 @@ class CliBackend(
                     onComplete(e)
                 } finally {
                     try {
-                        outputFile?.delete()
+                    } catch (_: Exception) {
+                    }
+                    try {
+                        promptFile?.delete()
                     } catch (_: Exception) {
                     }
                 }
@@ -409,7 +448,9 @@ class CliBackend(
             alive.set(false)
             try {
                 writer.close()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                System.err.println("Failed to close CLI writer: ${e.message}")
+            }
             process.destroy()
             exec.shutdownNow()
             readerExec.shutdownNow()
@@ -446,7 +487,7 @@ class CliBackend(
                 }
                 val idleMs = System.currentTimeMillis() - lastRead
                 if (idleMs > 2000 && received) break
-                if (System.currentTimeMillis() - start > 120_000) break
+                if (System.currentTimeMillis() - start > Defaults.CLI_PROCESS_TIMEOUT_SECONDS * 1000L) break
                 if (!isAlive() && outputQueue.isEmpty()) break
             }
 

@@ -12,7 +12,8 @@ data class BackendLaunchConfig(
     val sessionId: String? = null,
     val determinismMode: Boolean = false,
     val env: Map<String, String> = emptyMap(),
-    val cliSessionId: String? = null         // for CLI session resume (e.g. Claude --resume)
+    val cliSessionId: String? = null,        // for CLI session resume (e.g. Claude --resume)
+    val contextWindow: Int? = null
 )
 
 interface AgentConnection {

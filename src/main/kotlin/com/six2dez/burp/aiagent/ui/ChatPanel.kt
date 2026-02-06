@@ -491,7 +491,8 @@ class ChatPanel(
                 val url = obj["url"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 runCatching { URI(url).host }.getOrNull() ?: url
             }.firstOrNull()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            api.logging().logToOutput("[ChatPanel] Failed to extract host from context: ${e.message}")
             null
         }
     }
@@ -524,7 +525,8 @@ class ChatPanel(
                     null
                 }
             }.firstOrNull()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            api.logging().logToOutput("[ChatPanel] Failed to extract URI from context: ${e.message}")
             null
         }
     }
@@ -877,7 +879,8 @@ class ChatPanel(
             val tool = obj["tool"]?.jsonPrimitive?.content ?: return null
             val args = obj["args"]?.toString()
             ToolCall(tool, args)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            api.logging().logToOutput("[ChatPanel] Invalid tool JSON payload: ${e.message}")
             null
         }
     }

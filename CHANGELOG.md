@@ -4,6 +4,61 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.4] - 2026-02-06
+
+### Added
+
+- **UI Backend Health Indicator**: Visual "AI: OK" / "AI: Offline" badge in the main tab top bar to monitor backend connectivity.
+- **Active Scan Real-time Stats**: Live statistics (Queue, Processed, Confirmed) displayed in the active scanner toggle section.
+- **Configurable Ollama Context Window**: Added `ollamaContextWindow` setting (default 8192) to prevent context exhaustion errors with larger inputs.
+- **Shared Runtime Defaults**: New centralized defaults in `config/Defaults.kt` for scanner buffers, timeouts, dedup windows, queue limits, and other operational constants.
+- **Scanner Shared Utilities**: New shared scanner helpers (`ScannerIssueSupport`, `ScannerUtils`) to remove duplicated severity/remediation/allowlist logic.
+- **HTTP Backend Shared Support**: New `backends/http/HttpBackendSupport.kt` with shared HTTP client/retry utilities and reusable `ConversationHistory`.
+- **Active Scanner Queue Backpressure**: Added configurable max queue capacity (`ACTIVE_SCAN_MAX_QUEUE_SIZE`, default 2000) to prevent unbounded queue growth.
+- **Agent Profile Validation**: AGENTS profiles are now validated against currently enabled MCP tools, with warnings shown in Settings.
+- **Architecture Documentation**: Added `docs/ARCHITECTURE.md` describing module boundaries, runtime flows, extension points, and invariants.
+- **New Test Coverage**:
+  - `ConversationHistory` trimming/concurrency tests.
+  - `PayloadGenerator` context-aware and risk-filter tests.
+  - `ResponseAnalyzer` diff/time-based tests.
+  - Extended `InjectionPointExtractor` tests (escaped JSON strings, booleans, null).
+  - Extended AGENTS profile loader tests for tool validation.
+
+### Changed
+
+- **Analysis Reasoning in Passive AI**: Added a `reasoning` field to AI passive scanner results, displaying the model's logic in Burp issue details to reduce false positives and improve transparency.
+- **Structured Prompt Templates**: Upgraded all default templates to a modern, structured Markdown format (Role/Task/Scope/Output) for significantly better model performance and clarity.
+- **Passive Scanner Optimization**: Significantly reduced prompt token usage (~50%) by consolidating instructions and grouping vulnerability definitions, improving performance and compatibility with smaller models.
+- **Passive Scanner Concurrency/Startup Flow**:
+  - Replaced one-time registration and backend startup flags with atomic control.
+  - Replaced fixed startup sleep with bounded readiness polling.
+  - Replaced response wait busy-loop with latch-based completion waiting.
+- **Passive Scanner JSON Parsing**: Replaced fragile regex-only JSON extraction for AI results with Jackson-based parsing.
+- **Injection Point Extraction**: JSON extraction now supports escaped strings, booleans and null values with Jackson-first parsing + safe regex fallback.
+- **Settings Type Safety**: Migrated scanner settings from raw strings to enums (`SeverityLevel`, `PayloadRisk`, `ScanMode`) with compatibility-preserving load/save behavior.
+- **HTTP Backends Refactor**: Ollama, LM Studio and OpenAI-compatible backends now use shared HTTP/retry/history support for reduced duplication and more consistent behavior.
+- **Settings UI Modularization**: `SettingsPanel` now delegates section rendering to dedicated panel classes (`Backend`, `Passive`, `Active`, `MCP`, `Prompt`, `Privacy`, `Help`) for maintainability.
+- **Context Menu Active Scan UX**:
+  - Added explicit confirmation dialogs before active testing.
+  - Added target validation and queue status visibility (current/max queue).
+  - Added clearer warnings when targets are filtered or queue is full.
+
+### Fixed
+
+- **IDE Build Configuration**: Resolved Java 21 compatibility issues and removed unnecessary Eclipse plugins, enabling successful import and build in IDEs.
+- **Context Loss Persistence**: Fixed an issue where chat context was lost for stateless CLI backends (Codex, Gemini, OpenCode).
+- **History Management**: Implemented proper conversation history handling for CLI backends to simulate session continuity.
+- **Claude CLI Prompt Limits**: Implemented file-based prompt passing for large inputs (>32k chars). Prompts exceeding the limit are now written to a temporary file which Claude is instructed to read, completely bypassing shell argument/STDIN size limits and preventing "Prompt is too long" errors without data loss.
+- **Thread-Safety and Shutdown Reliability**:
+  - Active scanner stop path now force-cancels and awaits termination.
+  - Supervisor lifecycle transitions are lock-protected for safer start/stop/restart behavior.
+  - Main tab timers are explicitly stopped on extension shutdown.
+- **Resource Leak Prevention**:
+  - External backend `URLClassLoader` lifecycle is now closed explicitly via `BackendRegistry.shutdown()`.
+  - App shutdown now includes explicit backend registry shutdown.
+- **Error Visibility**:
+  - Reduced silent exception swallowing in operational paths (shutdown/supervisor/MCP/chat/profile loading), replacing with diagnostic logging where actionable.
+
 ## [0.1.3] - 2026-01-30
 
 ### Added

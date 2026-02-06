@@ -45,6 +45,8 @@ class MainTab(
     private val backendLabel = JLabel("Backend")
     private val mcpLabel = JLabel("MCP")
     private val mcpStatusLabel = JLabel("MCP: -")
+    private val backendStatusLabel = JLabel("AI: ?")
+    private val activeScanStatsLabel = JLabel("Scans: 0 | Vulns: 0")
 
     private val statusLabel = JLabel("Idle")
     private val sessionLabel = JLabel("Session: -")
@@ -52,6 +54,8 @@ class MainTab(
     private val mcpStatusTimer = Timer(1000) {
         updateMcpBadge()
         updateMcpControls()
+        updateBackendBadge()
+        updateActiveScanStats()
     }
     private val baseTabCaption = "AI Agent"
     private var tabbedPane: JTabbedPane? = null
@@ -59,6 +63,7 @@ class MainTab(
     private val dependencyBanner =
         DependencyBanner("MCP Server must be enabled. Toggle MCP to enable AI features.")
     private var syncingToggles = false
+    private var healthTimer: Timer? = null
 
     init {
         settingsPanel = SettingsPanel(api, backends, supervisor, audit, mcpSupervisor, passiveAiScanner, activeAiScanner)
@@ -134,6 +139,20 @@ class MainTab(
         mcpGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
         styleStatusLabel(mcpStatusLabel)
         mcpGroup.add(mcpStatusLabel)
+        
+        styleStatusLabel(backendStatusLabel)
+        // Check health in background every 5s, not every 1s to avoid spam
+        healthTimer = Timer(5000) {
+            val settings = settingsPanel.currentSettings()
+            Thread {
+                val healthy = supervisor.isBackendHealthy(settings)
+                SwingUtilities.invokeLater {
+                    backendStatusLabel.text = if(healthy) "AI: OK" else "AI: Offline"
+                    backendStatusLabel.background = if(healthy) UiTheme.Colors.statusRunning else UiTheme.Colors.statusCrashed
+                }
+            }.start()
+        }
+        healthTimer?.start()
 
         val passiveLabel = JLabel("Passive")
         passiveLabel.font = UiTheme.Typography.body
@@ -152,6 +171,10 @@ class MainTab(
         scannerGroup.add(activeLabel)
         scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
         scannerGroup.add(activeToggle)
+        scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
+        activeScanStatsLabel.font = UiTheme.Typography.body
+        activeScanStatsLabel.foreground = UiTheme.Colors.onSurfaceVariant
+        scannerGroup.add(activeScanStatsLabel)
 
         val clientGroup = JPanel()
         clientGroup.layout = BoxLayout(clientGroup, BoxLayout.X_AXIS)
@@ -164,6 +187,8 @@ class MainTab(
         sessionLabel.font = UiTheme.Typography.body
         sessionLabel.foreground = UiTheme.Colors.onSurfaceVariant
         clientGroup.add(statusLabel)
+        clientGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
+        clientGroup.add(backendStatusLabel)
         clientGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
         clientGroup.add(sessionLabel)
 
@@ -370,6 +395,24 @@ class MainTab(
             else -> UiTheme.Colors.outlineVariant
         }
     }
+    
+    private fun updateBackendBadge() {
+        // Updated by separate timer to avoid blocking EDT
+    }
+
+    private fun updateActiveScanStats() {
+        if (!activeAiScanner.isEnabled()) {
+            activeScanStatsLabel.text = "Active Scanner Disabled"
+            return
+        }
+        val status = activeAiScanner.getStatus()
+        val text = if (status.scanning) {
+            "Scanning: ${status.queueSize} queued | ${status.scansCompleted} done | ${status.vulnsConfirmed} confirmed"
+        } else {
+            "Queue: ${status.queueSize} | Done: ${status.scansCompleted} | Confirmed: ${status.vulnsConfirmed}"
+        }
+        activeScanStatsLabel.text = text
+    }
 
     private fun isBindFailure(exception: Throwable): Boolean {
         var current: Throwable? = exception
@@ -509,5 +552,11 @@ class MainTab(
             "lmstudio" -> ensureLmStudioReadyIfNeeded(settings)
             else -> true
         }
+    }
+
+    fun shutdown() {
+        mcpStatusTimer.stop()
+        healthTimer?.stop()
+        healthTimer = null
     }
 }

@@ -41,6 +41,7 @@ object App {
         private set
     lateinit var activeAiScanner: ActiveAiScanner
         private set
+    private var mainTab: MainTab? = null
 
     private lateinit var settingsRepo: AgentSettingsRepository
 
@@ -80,13 +81,14 @@ object App {
         activeAiScanner.maxPayloadsPerPoint = settings.activeAiMaxPayloadsPerPoint
         activeAiScanner.timeoutSeconds = settings.activeAiTimeoutSeconds
         activeAiScanner.requestDelayMs = settings.activeAiRequestDelayMs.toLong()
-        activeAiScanner.maxRiskLevel = PayloadRisk.fromString(settings.activeAiMaxRiskLevel)
+        activeAiScanner.maxRiskLevel = settings.activeAiMaxRiskLevel
         activeAiScanner.scopeOnly = settings.activeAiScopeOnly
-        activeAiScanner.scanMode = com.six2dez.burp.aiagent.scanner.ScanMode.fromString(settings.activeAiScanMode)
+        activeAiScanner.scanMode = settings.activeAiScanMode
         activeAiScanner.useCollaborator = settings.activeAiUseCollaborator
         activeAiScanner.setEnabled(settings.activeAiEnabled)
 
         val ui = MainTab(api, backendRegistry, supervisor, auditLogger, mcpSupervisor, passiveAiScanner, activeAiScanner)
+        mainTab = ui
         api.userInterface().registerSuiteTab("AI Agent", ui.root) //  [oai_citation:4‡PortSwigger](https://portswigger.net/burp/documentation/desktop/extend-burp/extensions/creating/first-extension?utm_source=chatgpt.com)
 
         // Context menu: requests/responses (all editions)
@@ -114,10 +116,39 @@ object App {
     }
 
     fun shutdown() {
-        try { passiveAiScanner.setEnabled(false); passiveAiScanner.shutdown() } catch (_: Exception) {}
-        try { activeAiScanner.setEnabled(false); activeAiScanner.shutdown() } catch (_: Exception) {}
-        try { supervisor.shutdown() } catch (_: Exception) {}
-        try { mcpSupervisor.shutdown() } catch (_: Exception) {}
+        try {
+            mainTab?.shutdown()
+        } catch (e: Exception) {
+            api.logging().logToError("MainTab shutdown failed: ${e.message}")
+        }
+        mainTab = null
+        try {
+            passiveAiScanner.setEnabled(false)
+            passiveAiScanner.shutdown()
+        } catch (e: Exception) {
+            api.logging().logToError("Passive scanner shutdown failed: ${e.message}")
+        }
+        try {
+            activeAiScanner.setEnabled(false)
+            activeAiScanner.shutdown()
+        } catch (e: Exception) {
+            api.logging().logToError("Active scanner shutdown failed: ${e.message}")
+        }
+        try {
+            supervisor.shutdown()
+        } catch (e: Exception) {
+            api.logging().logToError("Supervisor shutdown failed: ${e.message}")
+        }
+        try {
+            mcpSupervisor.shutdown()
+        } catch (e: Exception) {
+            api.logging().logToError("MCP supervisor shutdown failed: ${e.message}")
+        }
+        try {
+            backendRegistry.shutdown()
+        } catch (e: Exception) {
+            api.logging().logToError("Backend registry shutdown failed: ${e.message}")
+        }
         try {
             workerPool.shutdown()
             if (!workerPool.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -125,7 +156,13 @@ object App {
             }
         } catch (_: InterruptedException) {
             workerPool.shutdownNow()
-        } catch (_: Exception) {}
-        try { Alerting.shutdownClient() } catch (_: Exception) {}
+        } catch (e: Exception) {
+            api.logging().logToError("Worker pool shutdown failed: ${e.message}")
+        }
+        try {
+            Alerting.shutdownClient()
+        } catch (e: Exception) {
+            api.logging().logToError("Alerting client shutdown failed: ${e.message}")
+        }
     }
 }

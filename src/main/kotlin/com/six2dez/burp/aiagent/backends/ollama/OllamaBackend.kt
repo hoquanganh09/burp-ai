@@ -6,11 +6,11 @@ import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
+import com.six2dez.burp.aiagent.backends.http.ConversationHistory
+import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.net.Proxy
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -20,21 +20,11 @@ class OllamaBackend : AiBackend {
 
     private val mapper = ObjectMapper().registerKotlinModule()
 
-    private fun buildClient(timeoutSeconds: Long): OkHttpClient {
-        return OkHttpClient.Builder()
-            .connectTimeout(java.time.Duration.ofSeconds(10))
-            .writeTimeout(java.time.Duration.ofSeconds(30))
-            .readTimeout(java.time.Duration.ofSeconds(timeoutSeconds))
-            .callTimeout(java.time.Duration.ofSeconds(timeoutSeconds))
-            .proxy(Proxy.NO_PROXY)
-            .build()
-    }
-
     override fun launch(config: BackendLaunchConfig): AgentConnection {
         val baseUrl = config.baseUrl?.trimEnd('/') ?: "http://127.0.0.1:11434"
         val model = config.model?.ifBlank { "llama3.1" } ?: "llama3.1"
         val timeoutSeconds = (config.requestTimeoutSeconds ?: 120L).coerceIn(30L, 3600L)
-        val client = buildClient(timeoutSeconds)
+        val client = HttpBackendSupport.buildClient(timeoutSeconds)
         return OllamaConnection(
             client = client,
             mapper = mapper,
@@ -43,19 +33,21 @@ class OllamaBackend : AiBackend {
             headers = config.headers,
             determinismMode = config.determinismMode,
             sessionId = config.sessionId,
+            contextWindow = config.contextWindow,
             debugLog = { BackendDiagnostics.log("[ollama] $it") },
             errorLog = { BackendDiagnostics.logError("[ollama] $it") }
         )
     }
 
     private class OllamaConnection(
-        private val client: OkHttpClient,
+        private val client: okhttp3.OkHttpClient,
         private val mapper: ObjectMapper,
         private val baseUrl: String,
         private val model: String,
         private val headers: Map<String, String>,
         private val determinismMode: Boolean,
         private val sessionId: String?,
+        private val contextWindow: Int?,
         private val debugLog: (String) -> Unit,
         private val errorLog: (String) -> Unit
     ) : AgentConnection {
@@ -64,8 +56,7 @@ class OllamaBackend : AiBackend {
         private val exec = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "ollama-connection").apply { isDaemon = true }
         }
-        private val conversationHistory = mutableListOf<Map<String, String>>()
-        private val maxHistoryMessages = 20
+        private val conversationHistory = ConversationHistory(20)
 
         override fun isAlive(): Boolean = alive.get()
 
@@ -90,15 +81,13 @@ class OllamaBackend : AiBackend {
                         try {
                             debugLog("serialize start (model=$model, baseUrl=$baseUrl)")
                             // Add user message to conversation history
-                            synchronized(conversationHistory) {
-                                conversationHistory.add(mapOf("role" to "user", "content" to text))
-                                trimHistory()
-                            }
+                            conversationHistory.addUser(text)
                             // Use non-streaming mode for better performance
                             val json = buildChatJson(
                                 model = model,
                                 stream = false,
-                                temperature = if (determinismMode) 0.0 else null
+                                temperature = if (determinismMode) 0.0 else null,
+                                numCtx = contextWindow
                             )
                             debugLog("serialize done bytes=${json.toByteArray(Charsets.UTF_8).size}")
                             val req = Request.Builder()
@@ -147,20 +136,17 @@ class OllamaBackend : AiBackend {
 
                                 debugLog("received complete response (${content.length} chars)")
                                 // Add assistant response to conversation history
-                                synchronized(conversationHistory) {
-                                    conversationHistory.add(mapOf("role" to "assistant", "content" to content))
-                                    trimHistory()
-                                }
+                                conversationHistory.addAssistant(content)
                                 onChunk(content)
                                 onComplete(null)
                                 return@submit
                             }
                         } catch (e: Exception) {
                             lastError = e
-                            if (!isRetryableConnectionError(e) || attempt == maxAttempts - 1) {
+                            if (!HttpBackendSupport.isRetryableConnectionError(e) || attempt == maxAttempts - 1) {
                                 throw e
                             }
-                            val delayMs = retryDelayMs(attempt)
+                            val delayMs = HttpBackendSupport.retryDelayMs(attempt)
                             debugLog("retrying in ${delayMs}ms after: ${e.message}")
                             try {
                                 Thread.sleep(delayMs)
@@ -185,66 +171,13 @@ class OllamaBackend : AiBackend {
             }
         }
 
-        private fun sendNonStreaming(
-            text: String,
-            temperature: Double?,
-            onChunk: (String) -> Unit,
-            onComplete: (Throwable?) -> Unit
-        ) {
-            try {
-                val json = buildChatJson(
-                    model = model,
-                    stream = false,
-                    temperature = temperature
-                )
-                val req = Request.Builder()
-                    .url("$baseUrl/api/chat")
-                    .post(json.toRequestBody("application/json".toMediaType()))
-                    .apply {
-                        headers.forEach { (name, value) ->
-                            header(name, value)
-                        }
-                        if (!sessionId.isNullOrBlank()) {
-                            header("X-Session-Id", sessionId)
-                        }
-                    }
-                    .build()
-
-                debugLog("request -> ${req.url} (stream=false)")
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        val bodyText = resp.body?.string().orEmpty()
-                        errorLog("HTTP ${resp.code}: ${bodyText.take(500)}")
-                        onComplete(IllegalStateException("Ollama HTTP ${resp.code}: $bodyText"))
-                        return
-                    }
-                    val body = resp.body?.string().orEmpty()
-                    if (body.isBlank()) {
-                        onComplete(IllegalStateException("Ollama response body was empty"))
-                        return
-                    }
-                    val node = mapper.readTree(body)
-                    val content = node.path("message").path("content").asText()
-                        .ifBlank { node.path("response").asText() }
-                    if (content.isBlank()) {
-                        onComplete(IllegalStateException("Ollama response content was empty"))
-                        return
-                    }
-                    onChunk(content)
-                    onComplete(null)
-                }
-            } catch (e: Exception) {
-                errorLog("exception (stream=false): ${e.message}")
-                onComplete(e)
-            }
-        }
-
         private fun buildChatJson(
             model: String,
             stream: Boolean,
-            temperature: Double?
+            temperature: Double?,
+            numCtx: Int?
         ): String {
-            val messages = synchronized(conversationHistory) { conversationHistory.toList() }
+            val messages = conversationHistory.snapshot()
             val sb = StringBuilder(256)
             sb.append("{")
             sb.append("\"model\":\"").append(escapeJson(model)).append("\",")
@@ -257,17 +190,21 @@ class OllamaBackend : AiBackend {
             }
             sb.append("],")
             sb.append("\"stream\":").append(if (stream) "true" else "false")
-            if (temperature != null) {
-                sb.append(",\"options\":{\"temperature\":").append(temperature).append("}")
+            if (temperature != null || numCtx != null) {
+                sb.append(",\"options\":{")
+                var firstOpt = true
+                if (temperature != null) {
+                    sb.append("\"temperature\":").append(temperature)
+                    firstOpt = false
+                }
+                if (numCtx != null) {
+                    if (!firstOpt) sb.append(",")
+                    sb.append("\"num_ctx\":").append(numCtx)
+                }
+                sb.append("}")
             }
             sb.append("}")
             return sb.toString()
-        }
-
-        private fun trimHistory() {
-            while (conversationHistory.size > maxHistoryMessages) {
-                conversationHistory.removeAt(0)
-            }
         }
 
         private fun escapeJson(value: String): String {
@@ -289,23 +226,6 @@ class OllamaBackend : AiBackend {
                 }
             }
             return out.toString()
-        }
-
-        private fun isRetryableConnectionError(e: Exception): Boolean {
-            if (e is java.net.ConnectException || e is java.net.SocketTimeoutException) return true
-            val msg = e.message?.lowercase().orEmpty()
-            return msg.contains("failed to connect") || msg.contains("connection refused") || msg.contains("timeout")
-        }
-
-        private fun retryDelayMs(attempt: Int): Long {
-            return when (attempt) {
-                0 -> 500
-                1 -> 1000
-                2 -> 1500
-                3 -> 2000
-                4 -> 3000
-                else -> 4000
-            }
         }
 
         override fun stop() {

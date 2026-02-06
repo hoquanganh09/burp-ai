@@ -66,7 +66,9 @@ class ChatSessionManager {
         for ((_, state) in sessions) {
             try {
                 state.connection?.stop()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                System.err.println("Failed to stop chat session connection: ${e.message}")
+            }
         }
         sessions.clear()
     }
