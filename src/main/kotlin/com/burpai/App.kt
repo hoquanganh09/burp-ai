@@ -1,6 +1,7 @@
 package com.burpai
 
 import burp.api.montoya.MontoyaApi
+import burp.api.montoya.core.Registration
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent
 import burp.api.montoya.ui.contextmenu.AuditIssueContextMenuEvent
@@ -19,6 +20,7 @@ import com.burpai.supervisor.AgentSupervisor
 import com.burpai.ui.MainTab
 import com.burpai.ui.UiActions
 import com.burpai.alerts.Alerting
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -26,7 +28,13 @@ object App {
     lateinit var api: MontoyaApi
         private set
 
-    private val workerPool = Executors.newCachedThreadPool()
+    private var workerPool: ExecutorService = Executors.newCachedThreadPool()
+    private var mainTab: MainTab? = null
+    private var suiteTabRegistration: Registration? = null
+    private var contextMenuRegistration: Registration? = null
+    private var scanCheckRegistration: Registration? = null
+    @Volatile
+    private var initialized = false
     lateinit var backendRegistry: BackendRegistry
         private set
     lateinit var auditLogger: AuditLogger
@@ -44,8 +52,16 @@ object App {
 
     private lateinit var settingsRepo: AgentSettingsRepository
 
+    @Synchronized
     fun initialize(montoyaApi: MontoyaApi) {
+        if (initialized) {
+            shutdown()
+        }
+
         api = montoyaApi
+        if (workerPool.isShutdown || workerPool.isTerminated) {
+            workerPool = Executors.newCachedThreadPool()
+        }
         api.extension().setName("BurpAI v0.1.0")
         api.logging().logToOutput(BuildInfo.load().asLoadBlock())
 
@@ -88,10 +104,12 @@ object App {
         activeAiScanner.setEnabled(settings.activeAiEnabled)
 
         val ui = MainTab(api, backendRegistry, supervisor, auditLogger, mcpSupervisor, passiveAiScanner, activeAiScanner)
-        api.userInterface().registerSuiteTab("BurpAI", ui.root) //  [oai_citation:4‡PortSwigger](https://portswigger.net/burp/documentation/desktop/extend-burp/extensions/creating/first-extension?utm_source=chatgpt.com)
+        mainTab = ui
+        suiteTabRegistration = api.userInterface()
+            .registerSuiteTab("BurpAI", ui.root) //  [oai_citation:4‡PortSwigger](https://portswigger.net/burp/documentation/desktop/extend-burp/extensions/creating/first-extension?utm_source=chatgpt.com)
 
         // Context menu: requests/responses (all editions)
-        api.userInterface().registerContextMenuItemsProvider(object : ContextMenuItemsProvider {
+        contextMenuRegistration = api.userInterface().registerContextMenuItemsProvider(object : ContextMenuItemsProvider {
             override fun provideMenuItems(event: ContextMenuEvent) =
                 UiActions.requestResponseMenuItems(api, event, ui, mcpSupervisor, passiveAiScanner, activeAiScanner)
 
@@ -104,7 +122,7 @@ object App {
         // This integrates with Burp's native active scanner
         try {
             val aiScanCheck = AiScanCheck(api) { settingsRepo.load() }
-            api.scanner().registerScanCheck(aiScanCheck)
+            scanCheckRegistration = api.scanner().registerScanCheck(aiScanCheck)
             api.logging().logToOutput("AI ScanCheck registered with Burp Scanner (Pro feature)")
         } catch (e: Exception) {
             // Expected to fail on Community edition
@@ -112,9 +130,20 @@ object App {
         }
 
         api.logging().logToOutput("AI Agent extension loaded. Backends discovered: ${backendRegistry.listBackendIds().joinToString(", ")}")
+        initialized = true
     }
 
+    @Synchronized
     fun shutdown() {
+        if (!initialized) return
+        runCatching { scanCheckRegistration?.deregister() }
+        scanCheckRegistration = null
+        runCatching { contextMenuRegistration?.deregister() }
+        contextMenuRegistration = null
+        runCatching { suiteTabRegistration?.deregister() }
+        suiteTabRegistration = null
+        try { mainTab?.dispose() } catch (_: Exception) {}
+        mainTab = null
         try { passiveAiScanner.setEnabled(false); passiveAiScanner.shutdown() } catch (_: Exception) {}
         try { activeAiScanner.setEnabled(false); activeAiScanner.shutdown() } catch (_: Exception) {}
         try { supervisor.shutdown() } catch (_: Exception) {}
@@ -127,7 +156,10 @@ object App {
         } catch (_: InterruptedException) {
             workerPool.shutdownNow()
         } catch (_: Exception) {}
+        BackendDiagnostics.output = {}
+        BackendDiagnostics.error = {}
         try { Alerting.shutdownClient() } catch (_: Exception) {}
+        initialized = false
     }
 }
 

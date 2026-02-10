@@ -219,6 +219,10 @@ class SettingsPanel(
     private val activeAiViewFindings = JButton("View findings")
     private val activeAiClearQueue = JButton("Clear queue")
     private val activeAiResetStats = JButton("Reset stats")
+    private val statusRefreshTimer = javax.swing.Timer(2000) {
+        refreshPassiveAiStatus()
+        refreshActiveAiStatus()
+    }
 
     private val scannerTriageButton = JButton("Open triage")
 
@@ -510,10 +514,6 @@ class SettingsPanel(
         }
         
         // Timer to refresh scanner status periodically
-        val statusRefreshTimer = javax.swing.Timer(2000) {
-            refreshPassiveAiStatus()
-            refreshActiveAiStatus()
-        }
         statusRefreshTimer.start()
 
     }
@@ -1903,6 +1903,10 @@ class SettingsPanel(
         if (value.isEmpty()) return "''"
         if (value.none { it.isWhitespace() || it == '"' || it == '\'' }) return value
         return "'" + value.replace("'", "'\"'\"'") + "'"
+    }
+
+    fun dispose() {
+        runCatching { statusRefreshTimer.stop() }
     }
 
 }

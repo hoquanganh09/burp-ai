@@ -1,6 +1,7 @@
 package com.burpai.scanner
 
 import burp.api.montoya.MontoyaApi
+import burp.api.montoya.core.Registration
 import burp.api.montoya.http.message.HttpRequestResponse
 import burp.api.montoya.proxy.http.InterceptedResponse
 import burp.api.montoya.proxy.http.ProxyResponseHandler
@@ -56,6 +57,7 @@ class PassiveAiScanner(
     private val findings = ArrayDeque<PassiveAiFinding>(50)
     private val siteMapWarningLogged = AtomicBoolean(false)
     private var registered = false
+    private var proxyResponseRegistration: Registration? = null
     
     // Reference to active scanner for auto-queueing
     var activeScanner: ActiveAiScanner? = null
@@ -150,10 +152,15 @@ class PassiveAiScanner(
     fun setEnabled(on: Boolean) {
         enabled.set(on)
         if (on && !registered) {
-            api.proxy().registerResponseHandler(handler)
+            proxyResponseRegistration = api.proxy().registerResponseHandler(handler)
             registered = true
             api.logging().logToOutput("[PassiveAiScanner] Enabled - analyzing proxy traffic")
         } else if (!on) {
+            if (registered) {
+                runCatching { proxyResponseRegistration?.deregister() }
+                proxyResponseRegistration = null
+                registered = false
+            }
             api.logging().logToOutput("[PassiveAiScanner] Disabled")
         }
     }
@@ -206,6 +213,11 @@ class PassiveAiScanner(
 
     fun shutdown() {
         enabled.set(false)
+        if (registered) {
+            runCatching { proxyResponseRegistration?.deregister() }
+            proxyResponseRegistration = null
+            registered = false
+        }
         executor.shutdown()
         try {
             if (!executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {

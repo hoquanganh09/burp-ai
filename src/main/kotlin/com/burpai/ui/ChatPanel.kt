@@ -24,6 +24,7 @@ import java.net.URI
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -86,6 +87,7 @@ class ChatPanel(
     private val chatEmptyTitle = JLabel("No active session")
     private val chatEmptySubtitle = JLabel("Select a session or create a new one to begin.")
     private val chatEmptyButton = JButton("New Session")
+    private val disposed = AtomicBoolean(false)
     @Volatile
     private var chatRuntimeState: String = "Idle"
 
@@ -177,6 +179,14 @@ class ChatPanel(
     fun sessionsComponent(): JComponent = sessionsPanel
 
     fun runtimeSummary(): RuntimeSummary {
+        if (disposed.get()) {
+            return RuntimeSummary(
+                state = "Stopped",
+                backendId = null,
+                sessionTitle = null,
+                sessionId = null
+            )
+        }
         val selected = sessionsList.selectedValue
         return if (selected == null) {
             RuntimeSummary(
@@ -196,6 +206,7 @@ class ChatPanel(
     }
 
     fun setMcpAvailable(available: Boolean) {
+        if (disposed.get()) return
         mcpAvailable = available
         updateChatAvailability()
         syncStateWithContext()
@@ -223,6 +234,7 @@ class ChatPanel(
     }
 
     fun refreshPrivacyMode() {
+        if (disposed.get()) return
         updatePrivacyPill()
     }
 
@@ -309,6 +321,7 @@ class ChatPanel(
     }
 
     fun startSessionFromContext(capture: ContextCapture, promptTemplate: String, actionName: String) {
+        if (disposed.get()) return
         updatePrivacyPill()
         val uri = extractUriFromContext(capture)
         val title = if (uri.isNullOrBlank()) actionName else "$actionName: $uri"
@@ -375,6 +388,7 @@ class ChatPanel(
     }
 
     private fun sendFromInput() {
+        if (disposed.get()) return
         val text = inputArea.text.trim()
         if (text.isBlank()) return
         val session = sessionsList.selectedValue ?: createSession("Chat ${sessionsModel.size + 1}")
@@ -404,6 +418,7 @@ class ChatPanel(
         allowToolCalls: Boolean,
         actionName: String? = null
     ) {
+        if (disposed.get()) return
         val settings = getSettings()
         val session = sessionsById[sessionId]
         val backendId = session?.backendId ?: settings.preferredBackendId
@@ -451,16 +466,25 @@ class ChatPanel(
             privacyMode = settings.privacyMode,
             determinismMode = settings.determinismMode,
             onChunk = { chunk ->
+                if (disposed.get()) return@sendChat
                 responseBuffer.append(chunk)
-                SwingUtilities.invokeLater { assistant.append(chunk) }
+                SwingUtilities.invokeLater {
+                    if (disposed.get()) return@invokeLater
+                    assistant.append(chunk)
+                }
             },
             onComplete = { err ->
+                if (disposed.get()) return@sendChat
                 if (err != null) {
                     setChatRuntimeState("Error")
-                    SwingUtilities.invokeLater { assistant.append("\n[Error] ${err.message}") }
+                    SwingUtilities.invokeLater {
+                        if (disposed.get()) return@invokeLater
+                        assistant.append("\n[Error] ${err.message}")
+                    }
                 } else {
                     setChatRuntimeState("Ready")
                     SwingUtilities.invokeLater {
+                        if (disposed.get()) return@invokeLater
                         assistant.append("\n")
                         onResponseReady()
                     }
@@ -736,6 +760,7 @@ class ChatPanel(
     }
 
     private fun showSession(id: String) {
+        if (disposed.get()) return
         val layout = chatCards.layout as java.awt.CardLayout
         layout.show(chatCards, id)
         syncStateWithContext()
@@ -757,9 +782,29 @@ class ChatPanel(
     }
 
     private fun setChatRuntimeState(state: String) {
+        if (disposed.get()) return
         if (chatRuntimeState == state) return
         chatRuntimeState = state
         onStatusChanged()
+    }
+
+    fun dispose() {
+        if (!disposed.compareAndSet(false, true)) return
+        runCatching {
+            sessionsById.keys.toList().forEach { supervisor.removeChatSession(it) }
+        }
+        sessionPanels.values.forEach { panel ->
+            runCatching { panel.dispose() }
+        }
+        sessionPanels.clear()
+        sessionStates.clear()
+        sessionsById.clear()
+        sessionsModel.clear()
+        sendBtn.isEnabled = false
+        clearChatBtn.isEnabled = false
+        toolsBtn.isEnabled = false
+        newSessionBtn.isEnabled = false
+        inputArea.isEnabled = false
     }
 
 
@@ -809,6 +854,7 @@ class ChatPanel(
     }
     private inner class SessionPanel {
         val root: JComponent = JPanel(BorderLayout())
+        private val messagePanels = mutableListOf<ChatMessagePanel>()
         private val messages = object : JPanel(), javax.swing.Scrollable {
             override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
 
@@ -843,6 +889,7 @@ class ChatPanel(
 
         fun addMessage(role: String, text: String) {
             val message = ChatMessagePanel(role, text, onSaveNote = ::saveAsBurpNote)
+            messagePanels.add(message)
             normalizeMessageComponent(message.root)
             messages.add(message.root)
             messages.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
@@ -858,6 +905,7 @@ class ChatPanel(
 
         fun addStreamingMessage(role: String): StreamingMessage {
             val message = ChatMessagePanel(role, "", onSaveNote = ::saveAsBurpNote)
+            messagePanels.add(message)
             normalizeMessageComponent(message.root)
             messages.add(message.root)
             messages.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
@@ -866,9 +914,15 @@ class ChatPanel(
         }
 
         fun clearMessages() {
+            messagePanels.forEach { it.dispose() }
+            messagePanels.clear()
             messages.removeAll()
             messages.revalidate()
             messages.repaint()
+        }
+
+        fun dispose() {
+            clearMessages()
         }
 
         private fun refreshScroll() {
@@ -1033,6 +1087,11 @@ class ChatPanel(
             spinnerTimer = null
             spinnerLabel.isVisible = false
             editorPane.isVisible = true
+        }
+
+        fun dispose() {
+            spinnerTimer?.stop()
+            spinnerTimer = null
         }
 
         fun append(text: String) {

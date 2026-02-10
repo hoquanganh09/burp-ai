@@ -66,7 +66,9 @@ class MainTab(
     private val backendStatusLabel = JLabel("Backend: -")
     private val summaryAgeLabel = JLabel("Last summary: never")
     private val settingsRepo = AgentSettingsRepository(api)
+    private val disposed = AtomicBoolean(false)
     private val mcpStatusTimer = Timer(1000) {
+        if (disposed.get()) return@Timer
         updateMcpBadge()
         updateMcpControls()
     }
@@ -92,7 +94,10 @@ class MainTab(
     private val lastSummaryCompletedAt = AtomicLong(0L)
     private val workspaceTabs = JTabbedPane()
     private val siteSummaryTab = JPanel(BorderLayout())
-    private val dashboardTimer = Timer(2500) { refreshDashboard() }
+    private val dashboardTimer = Timer(2500) {
+        if (disposed.get()) return@Timer
+        refreshDashboard()
+    }
 
     init {
         settingsPanel = SettingsPanel(api, backends, supervisor, audit, mcpSupervisor, passiveAiScanner, activeAiScanner)
@@ -471,6 +476,7 @@ class MainTab(
     )
 
     private fun summarizeEntireSiteMap() {
+        if (disposed.get()) return
         if (mcpSupervisor.status() !is com.burpai.mcp.McpServerState.Running) {
             JOptionPane.showMessageDialog(
                 root,
@@ -494,6 +500,7 @@ class MainTab(
         }
 
         thread(name = "BurpAI-SiteMapSummary", isDaemon = true) {
+            if (disposed.get()) return@thread
             try {
                 val entries = safeSiteMapRequestResponses()
                 if (entries == null) {
@@ -534,8 +541,12 @@ class MainTab(
                     contextJson = null,
                     privacyMode = settings.privacyMode,
                     determinismMode = settings.determinismMode,
-                    onChunk = { chunk -> appendSiteSummaryChunk(chunk) },
+                    onChunk = { chunk ->
+                        if (disposed.get()) return@send
+                        appendSiteSummaryChunk(chunk)
+                    },
                     onComplete = { error ->
+                        if (disposed.get()) return@send
                         if (error != null) {
                             finishSiteSummary(error.message ?: "Unknown summary error.", isError = true)
                         } else {
@@ -550,15 +561,19 @@ class MainTab(
     }
 
     private fun appendSiteSummaryChunk(chunk: String) {
+        if (disposed.get()) return
         SwingUtilities.invokeLater {
+            if (disposed.get()) return@invokeLater
             summaryOutputArea.append(chunk)
             summaryOutputArea.caretPosition = summaryOutputArea.document.length
         }
     }
 
     private fun finishSiteSummary(message: String, isError: Boolean) {
+        if (disposed.get()) return
         summaryInProgress.set(false)
         SwingUtilities.invokeLater {
+            if (disposed.get()) return@invokeLater
             summarizeSiteMapButton.isEnabled = true
             val timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
             summaryStatusLabel.text = if (isError) {
@@ -723,8 +738,13 @@ class MainTab(
     }
 
     private fun refreshDashboard() {
+        if (disposed.get()) return
         if (!dashboardRefreshing.compareAndSet(false, true)) return
         thread(name = "BurpAI-DashboardRefresh", isDaemon = true) {
+            if (disposed.get()) {
+                dashboardRefreshing.set(false)
+                return@thread
+            }
             try {
                 val passiveStatus = passiveAiScanner.getStatus()
                 val activeStatus = activeAiScanner.getStatus()
@@ -745,6 +765,7 @@ class MainTab(
                 val summaryAge = formatRelativeSummaryAge(lastSummaryCompletedAt.get())
 
                 SwingUtilities.invokeLater {
+                    if (disposed.get()) return@invokeLater
                     dashboardRequestsLabel.text =
                         "Scanned requests: $totalScanned (Passive ${passiveStatus.requestsAnalyzed} | Active ${activeStatus.scansCompleted})"
                     updateScanProgress(totalScanned)
@@ -758,6 +779,7 @@ class MainTab(
             } catch (_: Throwable) {
                 // Keep dashboard resilient if Burp APIs are transient or unavailable.
                 SwingUtilities.invokeLater {
+                    if (disposed.get()) return@invokeLater
                     val timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
                     dashboardHighLabel.text = "HIGH 0"
                     dashboardMediumLabel.text = "MEDIUM 0"
@@ -1107,6 +1129,7 @@ class MainTab(
     }
 
     private fun openSettingsStudio() {
+        if (disposed.get()) return
         if (settingsDialog == null) {
             val owner = SwingUtilities.getWindowAncestor(root)
             val dialog = JDialog(owner, "BurpAI Settings Studio", Dialog.ModalityType.MODELESS)
@@ -1114,6 +1137,7 @@ class MainTab(
             dialog.minimumSize = Dimension(860, 620)
             dialog.setSize(1024, 720)
             dialog.setLocationRelativeTo(owner)
+            dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
             settingsDialog = dialog
         }
         settingsDialog?.isVisible = true
@@ -1221,5 +1245,18 @@ class MainTab(
             "lmstudio" -> ensureLmStudioReadyIfNeeded(settings)
             else -> true
         }
+    }
+
+    fun dispose() {
+        if (!disposed.compareAndSet(false, true)) return
+        runCatching { mcpStatusTimer.stop() }
+        runCatching { dashboardTimer.stop() }
+        runCatching {
+            settingsDialog?.isVisible = false
+            settingsDialog?.dispose()
+            settingsDialog = null
+        }
+        runCatching { settingsPanel.dispose() }
+        runCatching { chatPanel.dispose() }
     }
 }
