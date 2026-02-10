@@ -1,0 +1,8 @@
+com.burpai.backends.cli.CodexCliBackendFactory
+com.burpai.backends.cli.GeminiCliBackendFactory
+com.burpai.backends.cli.OpenCodeCliBackendFactory
+com.burpai.backends.cli.ClaudeCliBackendFactory
+com.burpai.backends.lmstudio.LmStudioBackendFactory
+com.burpai.backends.ollama.OllamaBackendFactory
+com.burpai.backends.openai.OpenAiCompatibleBackendFactory
+

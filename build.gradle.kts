@@ -1,13 +1,26 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Properties
 
 plugins {
     kotlin("jvm") version "2.1.21"
     kotlin("plugin.serialization") version "2.1.21"
     id("com.github.johnrengelman.shadow") version "8.1.1"
+    application
 }
 
-group = "com.six2dez.burp"
-version = "0.1.3"
+group = "com.burpai"
+version = "0.1.0"
+
+val releaseSummary = (project.findProperty("releaseSummary") as String?)?.trim().orEmpty()
+val buildMetaStateFile = rootProject.file("build-meta.properties")
+val generatedBuildInfoDir = layout.buildDirectory.dir("generated/resources/buildInfo")
+
+application {
+    applicationName = "BurpAI"
+    mainClass = "com.burpai.BurpAiAgentExtension"
+}
 
 repositories {
     mavenCentral()
@@ -54,6 +67,53 @@ java {
     }
 }
 
+val prepareBuildInfo by tasks.registering {
+    notCompatibleWithConfigurationCache("Writes local build metadata state file on each build.")
+    outputs.dir(generatedBuildInfoDir)
+    outputs.upToDateWhen { false }
+    inputs.property("releaseSummary", releaseSummary)
+
+    doLast {
+        fun sanitize(value: String): String = value.replace(Regex("[\\r\\n]+"), " ").trim()
+
+        val state = Properties()
+        if (buildMetaStateFile.exists()) {
+            buildMetaStateFile.inputStream().use(state::load)
+        } else {
+            state.setProperty("buildNumber", "-1")
+            state.setProperty("lastSummary", "Initial baseline build.")
+        }
+
+        val previousNumber = state.getProperty("buildNumber")?.toIntOrNull() ?: -1
+        val previousSummary = sanitize(state.getProperty("lastSummary").orEmpty())
+            .ifBlank { "No previous summary." }
+        val currentSummary = sanitize(releaseSummary).ifBlank { previousSummary }
+        val buildNumber = previousNumber + 1
+        val buildTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+
+        val outDir = generatedBuildInfoDir.get().asFile
+        outDir.mkdirs()
+
+        val buildInfo = Properties().apply {
+            setProperty("buildTime", buildTime)
+            setProperty("buildNumber", buildNumber.toString())
+            setProperty("previousSummary", previousSummary)
+            setProperty("currentSummary", currentSummary)
+        }
+        outDir.resolve("build-info.properties").outputStream().use { buildInfo.store(it, "Generated build info") }
+
+        state.setProperty("buildNumber", buildNumber.toString())
+        state.setProperty("lastSummary", currentSummary)
+        buildMetaStateFile.outputStream().use { state.store(it, "BurpAI local build metadata") }
+    }
+}
+
+sourceSets {
+    named("main") {
+        resources.srcDir(generatedBuildInfoDir)
+    }
+}
+
 tasks.withType<KotlinCompile> {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
@@ -61,10 +121,19 @@ tasks.withType<KotlinCompile> {
     }
 }
 
+tasks.processResources {
+    dependsOn(prepareBuildInfo)
+}
+
 tasks.shadowJar {
-    archiveBaseName.set("Burp-AI-Agent")
+    archiveBaseName.set("BurpAI")
     archiveClassifier.set("")
     mergeServiceFiles()
+}
+
+tasks.jar {
+    archiveBaseName.set("BurpAI")
+    archiveClassifier.set("plain")
 }
 
 tasks.build {

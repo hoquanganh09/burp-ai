@@ -30,6 +30,7 @@ out/
 
 # Runtime data (user-specific, created at ~/.burp-ai-agent/)
 audit.jsonl
+build-meta.properties
 
 # OS
 Thumbs.db
