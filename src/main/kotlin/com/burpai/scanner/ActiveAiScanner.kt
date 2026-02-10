@@ -129,9 +129,10 @@ class ActiveAiScanner(
         if (!enabled.get()) return
         if (target.vulnHint.vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return
         if (!ScanPolicy.isAllowedForMode(scanMode, target.vulnHint.vulnClass)) return
-        
+
+        val targetUrl = safeRequestUrl(target.originalRequest) ?: return
         // Check scope
-        if (scopeOnly && !api.scope().isInScope(target.originalRequest.request().url())) {
+        if (scopeOnly && !runCatching { api.scope().isInScope(targetUrl) }.getOrDefault(false)) {
             return
         }
         
@@ -155,6 +156,7 @@ class ActiveAiScanner(
             .filter { ScanPolicy.isAllowedForMode(scanMode, it) }
         
         for (request in requests) {
+            val requestUrl = safeRequestUrl(request) ?: continue
             val injectionPoints = extractInjectionPoints(request)
             for (point in injectionPoints) {
                 for (vulnClass in filteredClasses) {
@@ -164,7 +166,7 @@ class ActiveAiScanner(
                         vulnHint = VulnHint(vulnClass, 50, "Manual scan"),
                         priority = 50
                     )
-                    if (scopeOnly && !api.scope().isInScope(request.request().url())) {
+                    if (scopeOnly && !runCatching { api.scope().isInScope(requestUrl) }.getOrDefault(false)) {
                         continue
                     }
                     scanQueue.offer(target)
@@ -225,7 +227,8 @@ class ActiveAiScanner(
             
             exec.submit {
                 try {
-                    currentTarget.set("${target.vulnHint.vulnClass}: ${target.originalRequest.request().url().take(50)}")
+                    val displayUrl = safeRequestUrl(target.originalRequest)?.take(50) ?: "unknown"
+                    currentTarget.set("${target.vulnHint.vulnClass}: $displayUrl")
                     val result = executeScan(target)
                     handleResult(result)
                 } catch (e: Exception) {
@@ -245,6 +248,8 @@ class ActiveAiScanner(
     private fun executeScan(target: ActiveScanTarget): ActiveScanResult {
         val settings = getSettings()
         val vulnClass = target.vulnHint.vulnClass
+        val originalRequest = safeRequest(target.originalRequest)
+            ?: return ActiveScanResult(target, 0, null, "Missing original request")
 
         if (vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) {
             return ActiveScanResult(target, 0, null, "Passive-only vulnerability class")
@@ -255,11 +260,11 @@ class ActiveAiScanner(
 
         // Measure baseline response time
         val baselineStart = System.currentTimeMillis()
-        val baselineResponse = sendRequestWithTimeout(target.originalRequest.request())
+        val baselineResponse = sendRequestWithTimeout(originalRequest)
             ?: return ActiveScanResult(target, 0, null, "Failed to send baseline request (timeout)")
         val baselineTime = System.currentTimeMillis() - baselineStart
         val baselineRequestResponse = HttpRequestResponse.httpRequestResponse(
-            target.originalRequest.request(),
+            originalRequest,
             baselineResponse.response()
         )
 
@@ -316,14 +321,14 @@ class ActiveAiScanner(
         for ((truePayload, falsePayload) in booleanPayloadPairs) {
             try {
                 // Test TRUE condition
-                val trueRequest = injectPayload(target.originalRequest.request(), target.injectionPoint, truePayload.value)
+                val trueRequest = injectPayload(originalRequest, target.injectionPoint, truePayload.value)
                 val trueResponse = sendRequestWithTimeout(trueRequest) ?: continue
                 val trueRequestResponse = HttpRequestResponse.httpRequestResponse(trueRequest, trueResponse.response())
 
                 Thread.sleep(requestDelayMs)
 
                 // Test FALSE condition
-                val falseRequest = injectPayload(target.originalRequest.request(), target.injectionPoint, falsePayload.value)
+                val falseRequest = injectPayload(originalRequest, target.injectionPoint, falsePayload.value)
                 val falseResponse = sendRequestWithTimeout(falseRequest) ?: continue
                 val falseRequestResponse = HttpRequestResponse.httpRequestResponse(falseRequest, falseResponse.response())
 
@@ -354,7 +359,7 @@ class ActiveAiScanner(
             try {
                 // Build modified request with payload
                 val modifiedRequest = injectPayload(
-                    target.originalRequest.request(),
+                    originalRequest,
                     target.injectionPoint,
                     payload.value
                 )
@@ -425,6 +430,8 @@ class ActiveAiScanner(
         target: ActiveScanTarget,
         baseline: HttpRequestResponse
     ): ActiveScanResult {
+        val originalRequest = safeRequest(target.originalRequest)
+            ?: return ActiveScanResult(target, 0, null, "Missing original request")
         if (target.injectionPoint.type !in setOf(
                 InjectionType.URL_PARAM,
                 InjectionType.BODY_PARAM,
@@ -451,7 +458,7 @@ class ActiveAiScanner(
         for ((index, payload) in payloads.withIndex()) {
             try {
                 val modifiedRequest = injectPayload(
-                    target.originalRequest.request(),
+                    originalRequest,
                     target.injectionPoint,
                     payload.value
                 )
@@ -534,7 +541,7 @@ class ActiveAiScanner(
         target: ActiveScanTarget,
         baseline: HttpRequestResponse
     ): VulnConfirmation? {
-        val request = target.originalRequest.request()
+        val request = safeRequest(target.originalRequest) ?: return null
         if (!hasAuthContext(request)) return null
 
         val strippedRequest = stripAuthHeaders(request)
@@ -596,14 +603,15 @@ class ActiveAiScanner(
         modified: HttpRequestResponse,
         payload: Payload
     ): VulnConfirmation? {
+        val originalRequest = safeRequest(target.originalRequest) ?: return null
         val modifiedFull = buildFullResponse(modified)
         if (!modifiedFull.contains(payload.value)) return null
         if (buildFullResponse(baseline).contains(payload.value)) return null
         if (!isCacheable(modified)) return null
 
-        val followUpResponse = sendRequestWithTimeout(target.originalRequest.request()) ?: return null
+        val followUpResponse = sendRequestWithTimeout(originalRequest) ?: return null
         val followUp = HttpRequestResponse.httpRequestResponse(
-            target.originalRequest.request(),
+            originalRequest,
             followUpResponse.response()
         )
         val followUpFull = buildFullResponse(followUp)
@@ -626,15 +634,16 @@ class ActiveAiScanner(
         modified: HttpRequestResponse,
         payload: Payload
     ): VulnConfirmation? {
+        val originalRequest = safeRequest(target.originalRequest) ?: return null
         val modifiedBody = modified.response()?.bodyToString() ?: ""
-        val path = modified.request().path()
+        val path = runCatching { modified.request()?.path() }.getOrNull().orEmpty()
         if (!staticAssetRegex.containsMatchIn(path)) return null
         if (!sensitiveDataRegex.containsMatchIn(modifiedBody)) return null
         if (!isCacheable(modified)) return null
 
-        val followUpResponse = sendRequestWithTimeout(target.originalRequest.request()) ?: return null
+        val followUpResponse = sendRequestWithTimeout(originalRequest) ?: return null
         val followUp = HttpRequestResponse.httpRequestResponse(
-            target.originalRequest.request(),
+            originalRequest,
             followUpResponse.response()
         )
         val followUpBody = followUp.response()?.bodyToString() ?: ""
@@ -769,8 +778,9 @@ class ActiveAiScanner(
         }
 
         val oastUrl = "http://${collaboratorPayload.toString()}"
+        val originalRequest = safeRequest(target.originalRequest) ?: return null
         val oastRequest = injectPayload(
-            target.originalRequest.request(),
+            originalRequest,
             target.injectionPoint,
             oastUrl
         )
@@ -813,7 +823,8 @@ class ActiveAiScanner(
             future.get(timeout, TimeUnit.SECONDS)
         } catch (e: TimeoutException) {
             future.cancel(true)
-            api.logging().logToError("[ActiveAiScanner] Request timeout after ${timeout}s for ${request.url().take(80)}")
+            val requestUrl = runCatching { request.url().take(80) }.getOrDefault("unknown")
+            api.logging().logToError("[ActiveAiScanner] Request timeout after ${timeout}s for $requestUrl")
             null
         } catch (e: Exception) {
             future.cancel(true)
@@ -830,7 +841,7 @@ class ActiveAiScanner(
             
             audit.logEvent("active_scan_confirmed", mapOf(
                 "vuln_class" to confirmation.target.vulnHint.vulnClass.name,
-                "url" to confirmation.target.originalRequest.request().url(),
+                "url" to (safeRequestUrl(confirmation.target.originalRequest) ?: "unknown"),
                 "payload" to confirmation.payload.value.take(100),
                 "confidence" to confirmation.confidence.toString()
             ))
@@ -867,9 +878,10 @@ class ActiveAiScanner(
             confirmation.confidence >= 80 -> AuditIssueConfidence.FIRM
             else -> AuditIssueConfidence.TENTATIVE
         }
-        
+        val targetUrl = safeRequestUrl(target.originalRequest) ?: return
+
         try {
-            if (hasExistingIssue(title, target.originalRequest.request().url())) {
+            if (hasExistingIssue(title, targetUrl)) {
                 api.logging().logToOutput("[ActiveAiScanner] Consolidated duplicate issue: $title")
                 return
             }
@@ -877,7 +889,7 @@ class ActiveAiScanner(
                 title,
                 IssueText.sanitize(detail),
                 getRemediation(target.vulnHint.vulnClass),
-                target.originalRequest.request().url(),
+                targetUrl,
                 severity,
                 confidence,
                 null,
@@ -893,7 +905,7 @@ class ActiveAiScanner(
 
             val finding = ActiveAiFinding(
                 timestamp = System.currentTimeMillis(),
-                url = target.originalRequest.request().url(),
+                url = targetUrl,
                 title = title,
                 severity = mapSeverity(target.vulnHint.vulnClass).name,
                 detail = confirmation.evidence,
@@ -910,7 +922,8 @@ class ActiveAiScanner(
     }
 
     private fun hasExistingIssue(name: String, baseUrl: String): Boolean {
-        val issues = runCatching { api.siteMap().issues().toList() }.getOrElse {
+        val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return false
+        val issues = runCatching { siteMap.issues().toList() }.getOrElse {
             logSiteMapWarningOnce(it)
             return false
         }
@@ -920,13 +933,22 @@ class ActiveAiScanner(
     }
 
     private fun addIssueToSiteMap(issue: AuditIssue): Boolean {
+        val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return false
         return runCatching {
-            api.siteMap().add(issue)
+            siteMap.add(issue)
             true
         }.getOrElse {
             logSiteMapWarningOnce(it)
             false
         }
+    }
+
+    private fun safeRequest(requestResponse: HttpRequestResponse): HttpRequest? {
+        return runCatching { requestResponse.request() }.getOrNull()
+    }
+
+    private fun safeRequestUrl(requestResponse: HttpRequestResponse): String? {
+        return runCatching { requestResponse.request()?.url() }.getOrNull()
     }
 
     private fun logSiteMapWarningOnce(error: Throwable) {
@@ -1006,7 +1028,8 @@ class ActiveAiScanner(
     }
 
     private fun extractInjectionPoints(requestResponse: HttpRequestResponse): List<InjectionPoint> {
-        return InjectionPointExtractor.extract(requestResponse.request(), headerInjectionAllowlist)
+        val request = safeRequest(requestResponse) ?: return emptyList()
+        return InjectionPointExtractor.extract(request, headerInjectionAllowlist)
     }
 
     private fun mapSeverity(vulnClass: VulnClass): AuditIssueSeverity {

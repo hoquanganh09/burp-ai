@@ -216,10 +216,10 @@ class ChatPanel(
 
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         val noteBlock = "[BurpAI $timestamp]\n${payload.take(12000)}"
-        val existing = target.annotations().notes().orEmpty().trim()
+        val existing = runCatching { target.annotations().notes() }.getOrNull().orEmpty().trim()
         val merged = if (existing.isBlank()) noteBlock else "$existing\n\n$noteBlock"
-        target.annotations().setNotes(merged.take(32000))
-        return target.request()?.url()
+        runCatching { target.annotations().setNotes(merged.take(32000)) }
+        return runCatching { target.request()?.url() }.getOrNull()
     }
 
     fun refreshPrivacyMode() {

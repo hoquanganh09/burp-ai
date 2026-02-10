@@ -22,16 +22,19 @@ class ContextCollector(private val api: MontoyaApi) {
     fun fromRequestResponses(rr: List<HttpRequestResponse>, options: ContextOptions): ContextCapture {
         val policy = RedactionPolicy.fromMode(options.privacyMode)
         val items = rr.map { item ->
-            val req = item.request().toString()
-            val resp = item.response()?.toString()
+            val request = runCatching { item.request() }.getOrNull()
+            val req = runCatching { request?.toString() }.getOrNull().orEmpty().ifBlank { "<no request>" }
+            val resp = runCatching { item.response()?.toString() }.getOrNull()
 
             val redactedReq = Redaction.apply(req, policy, stableHostSalt = options.hostSalt)
             val redactedResp = resp?.let { Redaction.apply(it, policy, stableHostSalt = options.hostSalt) }
+            val requestUrl = runCatching { request?.url() }.getOrNull().orEmpty().ifBlank { "unknown" }
+            val requestMethod = runCatching { request?.method() }.getOrNull().orEmpty().ifBlank { "UNKNOWN" }
 
             HttpItem(
                 tool = null,
-                url = item.request().url(),
-                method = item.request().method(),
+                url = requestUrl,
+                method = requestMethod,
                 request = redactedReq,
                 response = redactedResp
             )

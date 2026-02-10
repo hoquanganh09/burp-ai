@@ -280,7 +280,11 @@ data class ActiveScanTarget(
     val vulnHint: VulnHint,
     val priority: Int = 50  // 0-100, higher = more urgent
 ) {
-    val id: String = "${originalRequest.request().url()}_${injectionPoint.name}_${vulnHint.vulnClass}"
+    private fun safeUrl(): String {
+        return runCatching { originalRequest.request()?.url() }.getOrNull().orEmpty().ifBlank { "unknown" }
+    }
+
+    val id: String = "${safeUrl()}_${injectionPoint.name}_${vulnHint.vulnClass}"
 }
 
 data class Payload(

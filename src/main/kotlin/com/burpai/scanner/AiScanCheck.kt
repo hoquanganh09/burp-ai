@@ -38,7 +38,8 @@ class AiScanCheck(
         }
         
         // Check scope
-        if (settings.activeAiScopeOnly && !api.scope().isInScope(baseRequestResponse.request().url())) {
+        val baseUrl = safeRequestUrl(baseRequestResponse) ?: return AuditResult.auditResult(emptyList())
+        if (settings.activeAiScopeOnly && !runCatching { api.scope().isInScope(baseUrl) }.getOrDefault(false)) {
             return AuditResult.auditResult(emptyList())
         }
         
@@ -146,6 +147,8 @@ class AiScanCheck(
         vulnClass: VulnClass
     ): AuditIssue? {
         val settings = getSettings()
+        val baseRequest = safeRequest(baseRequestResponse) ?: return null
+        val baseUrl = runCatching { baseRequest.url() }.getOrNull() ?: return null
         
         // Build request with payload using Burp's ByteArray
         val payloadBytes = burp.api.montoya.core.ByteArray.byteArray(payload.value)
@@ -164,7 +167,7 @@ class AiScanCheck(
         // Measure baseline if needed for time-based
         val baselineTime = if (payload.detectionMethod == DetectionMethod.BLIND_TIME) {
             val start = System.currentTimeMillis()
-            api.http().sendRequest(baseRequestResponse.request())
+            api.http().sendRequest(baseRequest)
             System.currentTimeMillis() - start
         } else 0L
         
@@ -202,7 +205,7 @@ class AiScanCheck(
             "[AI Active] ${vulnClass.name} (Burp Scanner)",
             buildDetail(insertionPoint, payload, evidence),
             getRemediation(vulnClass),
-            baseRequestResponse.request().url(),
+            baseUrl,
             mapSeverity(vulnClass),
             mapConfidence(payload),
             null,  // background
@@ -211,6 +214,12 @@ class AiScanCheck(
             listOf(baseRequestResponse, attackRequestResponse)
         )
     }
+
+    private fun safeRequest(requestResponse: HttpRequestResponse) =
+        runCatching { requestResponse.request() }.getOrNull()
+
+    private fun safeRequestUrl(requestResponse: HttpRequestResponse): String? =
+        runCatching { requestResponse.request()?.url() }.getOrNull()
 
     private fun buildEvidence(
         original: HttpRequestResponse,

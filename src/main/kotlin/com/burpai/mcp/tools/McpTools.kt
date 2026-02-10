@@ -520,7 +520,10 @@ fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
             val base = "status=${task.statusMessage()} requests=${task.requestCount()} errors=${task.errorCount()}"
             val audit = (task as? Audit)
             if (audit != null) {
-                val count = audit.issues().size
+                val count = runCatching { audit.issues().size }.getOrElse {
+                    api.logging().logToError("[MCP] scan_task_status: unable to read issues for task $taskId: ${it.message}")
+                    0
+                }
                 "$base issues=$count"
             } else {
                 base
@@ -553,7 +556,10 @@ fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
                 taskId != null -> {
                     val task = ScannerTaskRegistry.get(taskId)
                     val audit = task as? Audit ?: return@mcpTool "Task not found or not an audit: $taskId"
-                    audit.issues()
+                    runCatching { audit.issues() }.getOrElse {
+                        api.logging().logToError("[MCP] scan_report: unable to read issues for task $taskId: ${it.message}")
+                        emptyList()
+                    }
                 }
                 allIssues -> safeSiteMapIssues(api)
                 else -> return@mcpTool "Provide taskId or set allIssues=true"
@@ -1475,7 +1481,10 @@ object McpToolExecutor {
                     val base = "status=${task.statusMessage()} requests=${task.requestCount()} errors=${task.errorCount()}"
                     val audit = task as? Audit
                     if (audit != null) {
-                        val count = audit.issues().size
+                        val count = runCatching { audit.issues().size }.getOrElse {
+                            api.logging().logToError("[MCP] scan_task_status: unable to read issues for task ${input.taskId}: ${it.message}")
+                            0
+                        }
                         "$base issues=$count"
                     } else {
                         base
@@ -1501,7 +1510,10 @@ object McpToolExecutor {
                         input.taskId != null -> {
                             val task = ScannerTaskRegistry.get(input.taskId)
                             val audit = task as? Audit ?: return@runTool "Task not found or not an audit: ${input.taskId}"
-                            audit.issues()
+                            runCatching { audit.issues() }.getOrElse {
+                                api.logging().logToError("[MCP] scan_report: unable to read issues for task ${input.taskId}: ${it.message}")
+                                emptyList()
+                            }
                         }
                         input.allIssues -> safeSiteMapIssues(api)
                         else -> return@runTool "Provide taskId or set allIssues=true"

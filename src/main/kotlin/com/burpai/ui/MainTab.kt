@@ -589,21 +589,21 @@ class MainTab(
         var sampledBodies = 0
 
         for (entry in entries) {
-            val request = entry.request()
-            val rawUrl = request.url()
+            val request = runCatching { entry.request() }.getOrNull() ?: continue
+            val rawUrl = runCatching { request.url() }.getOrNull() ?: continue
             val inScope = runCatching { api.scope().isInScope(rawUrl) }.getOrDefault(false)
             if (inScope) inScopeRequests++
 
             val uri = runCatching { URI(rawUrl) }.getOrNull()
             val host = (uri?.host ?: request.httpService()?.host() ?: "unknown").lowercase(Locale.ROOT)
             val path = normalizePath(uri?.path ?: "/")
-            val method = request.method().uppercase(Locale.ROOT)
+            val method = runCatching { request.method() }.getOrDefault("GET").uppercase(Locale.ROOT)
             val key = "$host|$path"
             val endpoint = endpointMap.getOrPut(key) { EndpointAggregate(host = host, path = path) }
 
             endpoint.hits += 1
             endpoint.methods.add(method)
-            request.parameters().forEach { param ->
+            runCatching { request.parameters().toList() }.getOrDefault(emptyList()).forEach { param ->
                 val name = param.name().trim()
                 if (name.isNotBlank()) endpoint.params.add(name.take(48))
             }
@@ -612,7 +612,7 @@ class MainTab(
             if (status > 0) endpoint.statuses.add(status)
 
             val pathLower = path.lowercase(Locale.ROOT)
-            val hasAuthHeader = request.headers().any { h ->
+            val hasAuthHeader = runCatching { request.headers().toList() }.getOrDefault(emptyList()).any { h ->
                 val headerName = h.name().lowercase(Locale.ROOT)
                 headerName == "authorization" || headerName == "cookie" || headerName == "x-api-key" || headerName == "x-auth-token"
             }

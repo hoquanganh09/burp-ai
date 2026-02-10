@@ -99,8 +99,12 @@ class PassiveAiScanner(
                 return ProxyResponseReceivedAction.continueWith(response)
             }
 
+            val initiatingRequest = runCatching { response.initiatingRequest() }.getOrNull()
+                ?: return ProxyResponseReceivedAction.continueWith(response)
+            val initiatingUrl = runCatching { initiatingRequest.url() }.getOrNull()
+
             // Check scope
-            if (scopeOnly && !api.scope().isInScope(response.initiatingRequest().url())) {
+            if (scopeOnly && (initiatingUrl == null || !runCatching { api.scope().isInScope(initiatingUrl) }.getOrDefault(false))) {
                 return ProxyResponseReceivedAction.continueWith(response)
             }
 
@@ -111,8 +115,8 @@ class PassiveAiScanner(
             }
 
             // Check MIME type
-            val mime = response.statedMimeType().name.lowercase()
-            val inferredMime = response.inferredMimeType().name.lowercase()
+            val mime = runCatching { response.statedMimeType().name.lowercase() }.getOrDefault("unknown")
+            val inferredMime = runCatching { response.inferredMimeType().name.lowercase() }.getOrDefault("unknown")
             if (mime !in allowedMimeTypes && inferredMime !in allowedMimeTypes) {
                 return ProxyResponseReceivedAction.continueWith(response)
             }
@@ -127,7 +131,7 @@ class PassiveAiScanner(
 
             // Queue for analysis
             val requestResponse = HttpRequestResponse.httpRequestResponse(
-                response.initiatingRequest(),
+                initiatingRequest,
                 response
             )
             
@@ -245,7 +249,7 @@ class PassiveAiScanner(
         
         requests.forEachIndexed { index, reqRes ->
             executor.submit {
-                val url = try { reqRes.request().url() } catch (_: Exception) { "unknown" }
+                val url = safeRequestUrl(reqRes) ?: "unknown"
                 val shortUrl = if (url.length > 80) url.take(80) + "..." else url
                 
                 api.logging().logToOutput("[PassiveAiScanner] Analyzing [${index + 1}/$total]: $shortUrl")
@@ -291,12 +295,17 @@ class PassiveAiScanner(
     private fun doAnalysis(requestResponse: HttpRequestResponse) {
         try {
             val settings = getSettings()
-            val request = requestResponse.request()
+            val request = safeRequest(requestResponse) ?: run {
+                api.logging().logToError("[PassiveAiScanner] Missing request object, skipping item")
+                return
+            }
             val response = requestResponse.response()
+            val requestUrl = runCatching { request.url() }.getOrDefault("unknown")
+            val requestMethod = runCatching { request.method() }.getOrDefault("UNKNOWN")
 
             // Enforce scope filter for both proxy-driven and manual scans.
-            if (settings.passiveAiScopeOnly && !api.scope().isInScope(request.url())) {
-                api.logging().logToOutput("[PassiveAiScanner] Skipped out-of-scope request: ${request.url()}")
+            if (settings.passiveAiScopeOnly && (requestUrl == "unknown" || !runCatching { api.scope().isInScope(requestUrl) }.getOrDefault(false))) {
+                api.logging().logToOutput("[PassiveAiScanner] Skipped out-of-scope request: $requestUrl")
                 return
             }
 
@@ -368,7 +377,7 @@ class PassiveAiScanner(
 
             // Extract path segments for IDOR/BOLA analysis
             val urlPath = try {
-                java.net.URI(request.url()).path ?: ""
+                java.net.URI(requestUrl).path ?: ""
             } catch (_: Exception) { "" }
 
             // Look for potential object IDs in URL
@@ -381,9 +390,9 @@ class PassiveAiScanner(
 
             // Build simple text-based metadata (avoid Jackson classloader issues in Burp)
             val metadataText = buildString {
-                appendLine("URL: ${request.url()}")
+                appendLine("URL: $requestUrl")
                 appendLine("Path: $urlPath")
-                appendLine("Method: ${request.method()}")
+                appendLine("Method: $requestMethod")
                 appendLine("Status: ${response?.statusCode() ?: 0}")
                 appendLine("MIME Type: ${response?.statedMimeType()?.name ?: "unknown"}")
                 appendLine()
@@ -626,6 +635,7 @@ $metadata
         if (source == "ai" && confidence < 85) {
             return
         }
+        val targetUrl = safeRequestUrl(requestResponse) ?: "unknown"
 
         val issueCreated = if (shouldCreate) {
             try {
@@ -636,7 +646,7 @@ $metadata
                     else -> AuditIssueConfidence.TENTATIVE
                 }
                 val issueName = issueNameForPassive(title)
-                if (hasExistingIssue(issueName, requestResponse.request().url())) {
+                if (hasExistingIssue(issueName, targetUrl)) {
                     api.logging().logToOutput("[PassiveAiScanner] Consolidated duplicate issue: $issueName")
                     true
                 } else {
@@ -646,7 +656,7 @@ $metadata
                         issueName,
                         "$sanitizedDetail\n\n(AI passive analysis - may need active confirmation)\nConfidence: $confidence%$confidenceNote",
                         "Verify the finding manually or use AI Active Scanner for confirmation.",
-                        requestResponse.request().url(),
+                        targetUrl,
                         severity,
                         burpConfidence,
                         null,
@@ -667,7 +677,7 @@ $metadata
                             "title" to title,
                             "severity" to rawSeverity,
                             "confidence" to confidence.toString(),
-                            "url" to requestResponse.request().url(),
+                            "url" to targetUrl,
                             "source" to source
                         ))
                         true
@@ -695,7 +705,7 @@ $metadata
     ) {
         val finding = PassiveAiFinding(
             timestamp = System.currentTimeMillis(),
-            url = requestResponse.request().url(),
+            url = safeRequestUrl(requestResponse) ?: "unknown",
             title = title,
             severity = rawSeverity,
             detail = detail,
@@ -719,7 +729,8 @@ $metadata
     }
 
     private fun hasExistingIssue(name: String, baseUrl: String): Boolean {
-        val issues = runCatching { api.siteMap().issues().toList() }.getOrElse {
+        val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return false
+        val issues = runCatching { siteMap.issues().toList() }.getOrElse {
             logSiteMapWarningOnce(it)
             return false
         }
@@ -729,14 +740,21 @@ $metadata
     }
 
     private fun addIssueToSiteMap(issue: AuditIssue): Boolean {
+        val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return false
         return runCatching {
-            api.siteMap().add(issue)
+            siteMap.add(issue)
             true
         }.getOrElse {
             logSiteMapWarningOnce(it)
             false
         }
     }
+
+    private fun safeRequest(requestResponse: HttpRequestResponse) =
+        runCatching { requestResponse.request() }.getOrNull()
+
+    private fun safeRequestUrl(requestResponse: HttpRequestResponse): String? =
+        runCatching { requestResponse.request()?.url() }.getOrNull()
 
     private fun logSiteMapWarningOnce(error: Throwable) {
         if (!siteMapWarningLogged.compareAndSet(false, true)) return

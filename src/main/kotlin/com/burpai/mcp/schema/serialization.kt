@@ -7,30 +7,41 @@ import burp.api.montoya.websocket.Direction
 import kotlinx.serialization.Serializable
 
 fun AuditIssue.toSerializableForm(): IssueDetails {
+    val service = runCatching { httpService() }.getOrNull()
+    val severityValue = runCatching { severity()?.name }.getOrNull()
+        ?.let { runCatching { AuditIssueSeverity.valueOf(it) }.getOrNull() }
+        ?: AuditIssueSeverity.INFORMATION
+    val confidenceValue = runCatching { confidence()?.name }.getOrNull()
+        ?.let { runCatching { AuditIssueConfidence.valueOf(it) }.getOrNull() }
+        ?: AuditIssueConfidence.TENTATIVE
+    val definitionValue = runCatching { definition() }.getOrNull()
+
     return IssueDetails(
-        name = name(),
-        detail = detail(),
-        remediation = remediation(),
-        httpService = HttpService(
-            host = httpService().host(),
-            port = httpService().port(),
-            secure = httpService().secure()
-        ),
-        baseUrl = baseUrl(),
-        severity = AuditIssueSeverity.valueOf(severity().name),
-        confidence = AuditIssueConfidence.valueOf(confidence().name),
-        requestResponses = requestResponses().map { it.toSerializableForm() },
-        collaboratorInteractions = collaboratorInteractions().map {
+        name = runCatching { name() }.getOrNull(),
+        detail = runCatching { detail() }.getOrNull(),
+        remediation = runCatching { remediation() }.getOrNull(),
+        httpService = service?.let {
+            HttpService(
+                host = runCatching { it.host() }.getOrDefault("unknown"),
+                port = runCatching { it.port() }.getOrDefault(0),
+                secure = runCatching { it.secure() }.getOrDefault(false)
+            )
+        },
+        baseUrl = runCatching { baseUrl() }.getOrNull(),
+        severity = severityValue,
+        confidence = confidenceValue,
+        requestResponses = runCatching { requestResponses().map { rr -> rr.toSerializableForm() } }.getOrDefault(emptyList()),
+        collaboratorInteractions = runCatching { collaboratorInteractions() }.getOrDefault(emptyList()).map {
             Interaction(
-                interactionId = it.id().toString(),
-                timestamp = it.timeStamp().toString()
+                interactionId = runCatching { it.id().toString() }.getOrDefault("unknown"),
+                timestamp = runCatching { it.timeStamp().toString() }.getOrDefault("unknown")
             )
         },
         definition = AuditIssueDefinition(
-            id = definition().name(),
-            background = definition().background(),
-            remediation = definition().remediation(),
-            typeIndex = definition().typeIndex(),
+            id = runCatching { definitionValue?.name() }.getOrNull().orEmpty().ifBlank { "unknown" },
+            background = runCatching { definitionValue?.background() }.getOrNull(),
+            remediation = runCatching { definitionValue?.remediation() }.getOrNull(),
+            typeIndex = runCatching { definitionValue?.typeIndex() }.getOrNull() ?: 0,
         )
     )
 }
@@ -39,7 +50,7 @@ fun burp.api.montoya.http.message.HttpRequestResponse.toSerializableForm(): Http
     return HttpRequestResponse(
         request = request()?.toString() ?: "<no request>",
         response = response()?.toString() ?: "<no response>",
-        notes = annotations().notes()
+        notes = runCatching { annotations().notes() }.getOrNull()
     )
 }
 
@@ -47,7 +58,7 @@ fun ProxyHttpRequestResponse.toSerializableForm(): HttpRequestResponse {
     return HttpRequestResponse(
         request = request()?.toString() ?: "<no request>",
         response = response()?.toString() ?: "<no response>",
-        notes = annotations().notes()
+        notes = runCatching { annotations().notes() }.getOrNull()
     )
 }
 
@@ -59,7 +70,7 @@ fun ProxyWebSocketMessage.toSerializableForm(): WebSocketMessage {
                 WebSocketMessageDirection.CLIENT_TO_SERVER
             else
                 WebSocketMessageDirection.SERVER_TO_CLIENT,
-        notes = annotations().notes()
+        notes = runCatching { annotations().notes() }.getOrNull()
     )
 }
 
