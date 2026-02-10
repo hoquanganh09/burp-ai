@@ -12,12 +12,12 @@ object MarkdownRenderer {
         html = html.replace("\n", "<br>")
 
         val textColor = if (isDark) "#e6e6e6" else "#202020"
-        val fontFamily = UiTheme.Typography.body.family
+        val fontFamily = UiTheme.Typography.aiMono.family
 
         return """
             <html>
-            <body style='font-family: $fontFamily; color: $textColor; font-size: 11px; margin: 0; padding: 0; overflow-wrap: anywhere; word-break: break-word;'>
-            <div style='line-height: 1.4; overflow-wrap: anywhere; word-break: break-word;'>
+            <body style='font-family: $fontFamily; color: $textColor; font-size: 13px; margin: 0; padding: 0; overflow-wrap: anywhere; word-break: break-word;'>
+            <div style='line-height: 1.45; overflow-wrap: anywhere; word-break: break-word;'>
             $html
             </div>
             </body>
@@ -42,8 +42,8 @@ object MarkdownRenderer {
             val labelFg = if (isDark) "#C7D2E0" else "#5A6370"
             """
             <div style='margin: 6px 0;'>
-              <div style='display: inline-block; background: $labelBg; color: $labelFg; border: 1px solid $border; border-bottom: none; border-radius: 6px 6px 0 0; padding: 2px 8px; font-family: ${UiTheme.Typography.label.family}; font-size: 10px;'>$language</div>
-              <pre style='margin: 0; background-color: $bg; border: 1px solid $border; border-radius: 0 6px 6px 6px; padding: 10px; font-family: ${UiTheme.Typography.mono.family}; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;'><code>$highlighted</code></pre>
+              <div style='display: inline-block; background: $labelBg; color: $labelFg; border: 1px solid $border; border-bottom: none; border-radius: 6px 6px 0 0; padding: 2px 8px; font-family: ${UiTheme.Typography.aiButton.family}; font-size: 11px;'>$language</div>
+              <pre style='margin: 0; background-color: $bg; border: 1px solid $border; border-radius: 0 6px 6px 6px; padding: 10px; font-family: ${UiTheme.Typography.aiMono.family}; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;'><code>$highlighted</code></pre>
             </div>
             """.trimIndent()
         }
@@ -53,7 +53,7 @@ object MarkdownRenderer {
         val bg = if (isDark) "#3A4151" else "#EDE6DA"
         val fg = if (isDark) "#F0F4FB" else "#2A3240"
         return input.replace(Regex("`([^`]+)`")) { m ->
-            "<code style='background-color: $bg; color: $fg; padding: 2px 4px; border-radius: 4px; font-family: ${UiTheme.Typography.mono.family}; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;'>${m.groupValues[1]}</code>"
+            "<code style='background-color: $bg; color: $fg; padding: 2px 4px; border-radius: 4px; font-family: ${UiTheme.Typography.aiMono.family}; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;'>${m.groupValues[1]}</code>"
         }
     }
 

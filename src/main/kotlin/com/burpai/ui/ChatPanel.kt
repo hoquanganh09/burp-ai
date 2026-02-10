@@ -93,7 +93,7 @@ class ChatPanel(
         root.background = UiTheme.Colors.surface
 
         sessionsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        sessionsList.font = UiTheme.Typography.body
+        sessionsList.font = UiTheme.Typography.aiText
         sessionsList.cellRenderer = ChatSessionRenderer()
         sessionsList.background = UiTheme.Colors.cardBackground
         sessionsList.foreground = UiTheme.Colors.onSurface
@@ -113,21 +113,24 @@ class ChatPanel(
             }
         })
 
-        clearChatBtn.font = UiTheme.Typography.label
+        clearChatBtn.font = UiTheme.Typography.aiButton
+        clearChatBtn.margin = java.awt.Insets(6, 8, 6, 8)
         clearChatBtn.isFocusPainted = false
         clearChatBtn.addActionListener { clearCurrentChat() }
 
-        toolsBtn.font = UiTheme.Typography.label
+        toolsBtn.font = UiTheme.Typography.aiButton
+        toolsBtn.margin = java.awt.Insets(6, 8, 6, 8)
         toolsBtn.isFocusPainted = false
         toolsBtn.toolTipText = "Browse and invoke MCP tools. Select a tool to insert /tool <id> {} into input. Fill JSON args and Send to execute."
         toolsBtn.addActionListener { showToolsMenu() }
 
-        newSessionBtn.font = UiTheme.Typography.label
+        newSessionBtn.font = UiTheme.Typography.aiButton
+        newSessionBtn.margin = java.awt.Insets(6, 8, 6, 8)
         newSessionBtn.isFocusPainted = false
         newSessionBtn.addActionListener { createSession("Chat ${sessionsModel.size + 1}") }
 
         val listScroll = JScrollPane(sessionsList)
-        listScroll.border = EmptyBorder(8, 8, 8, 8)
+        listScroll.border = EmptyBorder(12, 12, 12, 12)
         listScroll.preferredSize = Dimension(200, 400)
         listScroll.viewport.background = UiTheme.Colors.cardBackground
         listScroll.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
@@ -137,11 +140,11 @@ class ChatPanel(
         listHeader.isOpaque = true
         listHeader.background = UiTheme.Colors.cardBackground
         val listTitle = JLabel("Sessions")
-        listTitle.font = UiTheme.Typography.label
+        listTitle.font = UiTheme.Typography.aiHeader
         listTitle.foreground = UiTheme.Colors.onSurfaceVariant
         listHeader.add(listTitle, BorderLayout.WEST)
         listHeader.add(newSessionBtn, BorderLayout.EAST)
-        listHeader.border = EmptyBorder(8, 12, 8, 12)
+        listHeader.border = EmptyBorder(10, 12, 10, 12)
 
         buildEmptyState()
         buildChatEmptyState()
@@ -224,50 +227,52 @@ class ChatPanel(
     }
 
     private fun buildEmptyState() {
-        emptyTitle.font = UiTheme.Typography.title
+        emptyTitle.font = UiTheme.Typography.aiHeader
         emptyTitle.foreground = UiTheme.Colors.onSurface
-        emptySubtitle.font = UiTheme.Typography.body
+        emptySubtitle.font = UiTheme.Typography.aiText
         emptySubtitle.foreground = UiTheme.Colors.onSurfaceVariant
-        emptyButton.font = UiTheme.Typography.label
+        emptyButton.font = UiTheme.Typography.aiButton
         emptyButton.background = UiTheme.Colors.primary
         emptyButton.foreground = UiTheme.Colors.onPrimary
         emptyButton.isOpaque = true
         emptyButton.isFocusPainted = false
-        emptyButton.border = EmptyBorder(8, 14, 8, 14)
+        emptyButton.border = EmptyBorder(6, 8, 6, 8)
+        emptyButton.margin = java.awt.Insets(6, 8, 6, 8)
         emptyButton.addActionListener { createSession("Chat ${sessionsModel.size + 1}") }
 
         val stack = JPanel()
         stack.layout = BoxLayout(stack, BoxLayout.Y_AXIS)
         stack.isOpaque = false
         stack.add(emptyTitle)
-        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 6)))
+        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
         stack.add(emptySubtitle)
-        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 12)))
+        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
         stack.add(emptyButton)
 
         emptyStatePanel.add(stack, BorderLayout.CENTER)
     }
 
     private fun buildChatEmptyState() {
-        chatEmptyTitle.font = UiTheme.Typography.title
+        chatEmptyTitle.font = UiTheme.Typography.aiHeader
         chatEmptyTitle.foreground = UiTheme.Colors.onSurface
-        chatEmptySubtitle.font = UiTheme.Typography.body
+        chatEmptySubtitle.font = UiTheme.Typography.aiText
         chatEmptySubtitle.foreground = UiTheme.Colors.onSurfaceVariant
-        chatEmptyButton.font = UiTheme.Typography.label
+        chatEmptyButton.font = UiTheme.Typography.aiButton
         chatEmptyButton.background = UiTheme.Colors.primary
         chatEmptyButton.foreground = UiTheme.Colors.onPrimary
         chatEmptyButton.isOpaque = true
         chatEmptyButton.isFocusPainted = false
-        chatEmptyButton.border = EmptyBorder(8, 14, 8, 14)
+        chatEmptyButton.border = EmptyBorder(6, 8, 6, 8)
+        chatEmptyButton.margin = java.awt.Insets(6, 8, 6, 8)
         chatEmptyButton.addActionListener { createSession("Chat ${sessionsModel.size + 1}") }
 
         val stack = JPanel()
         stack.layout = BoxLayout(stack, BoxLayout.Y_AXIS)
         stack.isOpaque = false
         stack.add(chatEmptyTitle)
-        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 6)))
+        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
         stack.add(chatEmptySubtitle)
-        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 12)))
+        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
         stack.add(chatEmptyButton)
 
         chatEmptyPanel.add(stack, BorderLayout.CENTER)
@@ -328,11 +333,11 @@ class ChatPanel(
     private fun inputPanel(): JPanel {
         val panel = JPanel(BorderLayout())
         panel.background = UiTheme.Colors.cardBackground
-        panel.border = EmptyBorder(10, 12, 12, 12)
+        panel.border = EmptyBorder(12, 12, 12, 12)
 
         inputArea.lineWrap = true
         inputArea.wrapStyleWord = true
-        inputArea.font = UiTheme.Typography.body
+        inputArea.font = UiTheme.Typography.aiMono
         inputArea.background = UiTheme.Colors.inputBackground
         inputArea.foreground = UiTheme.Colors.inputForeground
         inputArea.border = javax.swing.border.LineBorder(UiTheme.Colors.outline, 1, true)
@@ -345,7 +350,8 @@ class ChatPanel(
             }
         })
 
-        sendBtn.font = UiTheme.Typography.label
+        sendBtn.font = UiTheme.Typography.aiButton
+        sendBtn.margin = java.awt.Insets(6, 8, 6, 8)
         sendBtn.isFocusPainted = false
         sendBtn.addActionListener { sendFromInput() }
         updatePrivacyPill()
@@ -776,23 +782,23 @@ class ChatPanel(
         ): java.awt.Component {
             val label = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus) as JLabel
             if (value !is ChatSession) {
-                label.border = EmptyBorder(6, 10, 6, 10)
+                label.border = EmptyBorder(8, 10, 8, 10)
                 return label
             }
 
             val panel = JPanel()
             panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-            panel.border = EmptyBorder(6, 10, 6, 10)
+            panel.border = EmptyBorder(8, 10, 8, 10)
             panel.isOpaque = true
             panel.background = if (isSelected) list.selectionBackground else list.background
 
             val titleLabel = JLabel(value.title)
-            titleLabel.font = label.font
+            titleLabel.font = UiTheme.Typography.aiHeader
             titleLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
             titleLabel.isOpaque = false
 
             val backendLabel = JLabel(value.backendId)
-            backendLabel.font = label.font.deriveFont((label.font.size - 2).toFloat())
+            backendLabel.font = UiTheme.Typography.aiStatus
             backendLabel.foreground = if (isSelected) list.selectionForeground else UiTheme.Colors.onSurfaceVariant
             backendLabel.isOpaque = false
 
@@ -839,14 +845,14 @@ class ChatPanel(
             val message = ChatMessagePanel(role, text, onSaveNote = ::saveAsBurpNote)
             normalizeMessageComponent(message.root)
             messages.add(message.root)
-            messages.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
+            messages.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
             refreshScroll()
         }
 
         fun addComponent(component: JComponent) {
             normalizeMessageComponent(component)
             messages.add(component)
-            messages.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
+            messages.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
             refreshScroll()
         }
 
@@ -854,7 +860,7 @@ class ChatPanel(
             val message = ChatMessagePanel(role, "", onSaveNote = ::saveAsBurpNote)
             normalizeMessageComponent(message.root)
             messages.add(message.root)
-            messages.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
+            messages.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
             refreshScroll()
             return StreamingMessage(message)
         }
@@ -913,8 +919,8 @@ class ChatPanel(
             }
         }
         private val rawText = StringBuilder(initialText)
-        private val copyBtn = JButton("Copy")
-        private val saveNoteBtn = JButton("Save as Burp Note")
+        private val copyBtn = JButton("⧉ Copy")
+        private val saveNoteBtn = JButton("✎ Save as Note")
         private val spinnerLabel = JLabel("Thinking...")
         private var spinnerTimer: javax.swing.Timer? = null
         private val spinnerFrames = listOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -924,34 +930,34 @@ class ChatPanel(
         init {
             root.layout = BorderLayout()
             root.isOpaque = false
-            root.border = EmptyBorder(4, 8, 4, 8)
+            root.border = EmptyBorder(6, 8, 6, 8)
 
             bubble = JPanel(BorderLayout())
             bubble.isOpaque = true
             bubble.background = UiTheme.Colors.surface
             bubble.border = javax.swing.BorderFactory.createCompoundBorder(
                 javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline, 1),
-                EmptyBorder(8, 12, 8, 12)
+                EmptyBorder(10, 12, 10, 12)
             )
 
             val header = JPanel(BorderLayout())
             header.isOpaque = false
-            header.border = EmptyBorder(0, 0, 4, 0)
+            header.border = EmptyBorder(0, 0, 8, 0)
 
             val label = JLabel(role)
-            label.font = UiTheme.Typography.label
+            label.font = UiTheme.Typography.aiHeader
             label.foreground = UiTheme.Colors.primary
             header.add(label, BorderLayout.WEST)
 
             // Spinner setup
-            spinnerLabel.font = UiTheme.Typography.body
+            spinnerLabel.font = UiTheme.Typography.aiText
             spinnerLabel.foreground = UiTheme.Colors.onSurfaceVariant
             spinnerLabel.isVisible = showSpinner
 
             editorPane.contentType = "text/html"
             editorPane.isEditable = false
             editorPane.background = UiTheme.Colors.inputBackground
-            editorPane.border = EmptyBorder(4, 6, 4, 6)
+            editorPane.border = EmptyBorder(6, 8, 6, 8)
             editorPane.isVisible = !showSpinner
             updateHtml()
 
@@ -960,9 +966,9 @@ class ChatPanel(
             contentPanel.add(spinnerLabel, BorderLayout.NORTH)
             contentPanel.add(editorPane, BorderLayout.CENTER)
 
-            copyBtn.font = UiTheme.Typography.label
+            copyBtn.font = UiTheme.Typography.aiButton
             copyBtn.isFocusPainted = false
-            copyBtn.margin = java.awt.Insets(2, 6, 2, 6)
+            copyBtn.margin = java.awt.Insets(6, 8, 6, 8)
             copyBtn.border = javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline)
             copyBtn.background = UiTheme.Colors.surface
             copyBtn.foreground = UiTheme.Colors.onSurface
@@ -971,9 +977,9 @@ class ChatPanel(
                 clipboard.setContents(java.awt.datatransfer.StringSelection(rawText.toString()), null)
             }
 
-            saveNoteBtn.font = UiTheme.Typography.label
+            saveNoteBtn.font = UiTheme.Typography.aiButton
             saveNoteBtn.isFocusPainted = false
-            saveNoteBtn.margin = java.awt.Insets(2, 6, 2, 6)
+            saveNoteBtn.margin = java.awt.Insets(6, 8, 6, 8)
             saveNoteBtn.border = javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline)
             saveNoteBtn.background = UiTheme.Colors.surface
             saveNoteBtn.foreground = UiTheme.Colors.onSurface
@@ -988,9 +994,9 @@ class ChatPanel(
                 javax.swing.JOptionPane.showMessageDialog(root, message, "BurpAI Note", type)
             }
 
-            val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
+            val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 0)).apply {
                 isOpaque = false
-                border = EmptyBorder(6, 0, 0, 0)
+                border = EmptyBorder(8, 0, 0, 0)
                 add(copyBtn)
                 if (!isUser && onSaveNote != null) add(saveNoteBtn)
             }

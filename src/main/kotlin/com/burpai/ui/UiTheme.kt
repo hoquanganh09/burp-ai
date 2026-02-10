@@ -68,5 +68,12 @@ object UiTheme {
         val body: Font get() = Font(sansFamily, Font.PLAIN, baseSize)
         val label: Font get() = Font(sansFamily, Font.BOLD, baseSize)
         val mono: Font get() = Font(monoFamily, Font.PLAIN, baseSize)
+
+        // Step 8.1 polish targets for AI Agent tab (spacing/typography only)
+        val aiHeader: Font get() = Font(sansFamily, Font.BOLD, 14)
+        val aiText: Font get() = Font(sansFamily, Font.PLAIN, 12)
+        val aiButton: Font get() = Font(sansFamily, Font.BOLD, 13)
+        val aiStatus: Font get() = Font(sansFamily, Font.PLAIN, 11)
+        val aiMono: Font get() = Font(monoFamily, Font.PLAIN, 13)
     }
 }
