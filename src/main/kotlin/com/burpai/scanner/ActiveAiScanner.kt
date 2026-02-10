@@ -43,6 +43,7 @@ class ActiveAiScanner(
     private val vulnsConfirmed = AtomicInteger(0)
     private val currentTarget = AtomicReference<String?>(null)
     private val confirmations = ArrayDeque<ActiveAiFinding>(50)
+    private val siteMapWarningLogged = AtomicBoolean(false)
     
     private val payloadGenerator = PayloadGenerator()
     private val responseAnalyzer = ResponseAnalyzer()
@@ -885,7 +886,9 @@ class ActiveAiScanner(
                 listOf(target.originalRequest, confirmation.exploitResponse)
             )
             
-            api.siteMap().add(issue)
+            if (!addIssueToSiteMap(issue)) {
+                return
+            }
             api.logging().logToOutput("[ActiveAiScanner] CONFIRMED: ${target.vulnHint.vulnClass.name} in '${target.injectionPoint.name}' (${confirmation.confidence}%)")
 
             val finding = ActiveAiFinding(
@@ -907,7 +910,29 @@ class ActiveAiScanner(
     }
 
     private fun hasExistingIssue(name: String, baseUrl: String): Boolean {
-        return api.siteMap().issues().any { it.name() == name && it.baseUrl() == baseUrl }
+        val issues = runCatching { api.siteMap().issues().toList() }.getOrElse {
+            logSiteMapWarningOnce(it)
+            return false
+        }
+        return issues.any { issue ->
+            runCatching { issue.name() == name && issue.baseUrl() == baseUrl }.getOrDefault(false)
+        }
+    }
+
+    private fun addIssueToSiteMap(issue: AuditIssue): Boolean {
+        return runCatching {
+            api.siteMap().add(issue)
+            true
+        }.getOrElse {
+            logSiteMapWarningOnce(it)
+            false
+        }
+    }
+
+    private fun logSiteMapWarningOnce(error: Throwable) {
+        if (!siteMapWarningLogged.compareAndSet(false, true)) return
+        val detail = error.message ?: error::class.java.simpleName
+        api.logging().logToError("[ActiveAiScanner] SiteMap API unavailable, skipping issue sync: $detail")
     }
 
     private fun injectPayload(request: HttpRequest, point: InjectionPoint, payload: String): HttpRequest {

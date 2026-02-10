@@ -41,6 +41,7 @@ import java.util.regex.Pattern
 import javax.swing.JTextArea
 
 private val toolJson = Json { encodeDefaults = true }
+private val siteMapWarningKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
 fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
     mcpTool("status", "Returns basic extension and Burp version status.", context) {
@@ -437,7 +438,7 @@ fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
             context,
             toolName = "scanner_issues"
         ) {
-            api.siteMap().issues().asSequence().map { toolJson.encodeToString(it.toSerializableForm()) }
+            safeSiteMapIssues(api).asSequence().map { toolJson.encodeToString(it.toSerializableForm()) }
         }
 
         mcpTool<StartAudit>(
@@ -554,7 +555,7 @@ fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
                     val audit = task as? Audit ?: return@mcpTool "Task not found or not an audit: $taskId"
                     audit.issues()
                 }
-                allIssues -> api.siteMap().issues()
+                allIssues -> safeSiteMapIssues(api)
                 else -> return@mcpTool "Provide taskId or set allIssues=true"
             }
 
@@ -684,7 +685,7 @@ fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
         context,
         toolName = "site_map"
     ) {
-        val items = api.siteMap().requestResponses()
+        val items = safeSiteMapEntries(api)
         val seq = if (context.determinismMode) {
             items.sortedBy { it.request()?.url().orEmpty() }.asSequence()
         } else {
@@ -702,7 +703,7 @@ fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
         val filter = burp.api.montoya.sitemap.SiteMapFilter { node ->
             compiledRegex.matcher(node.url()).find()
         }
-        val items = api.siteMap().requestResponses(filter)
+        val items = safeSiteMapEntries(api, filter)
         val seq = if (context.determinismMode) {
             items.sortedBy { it.request()?.url().orEmpty() }.asSequence()
         } else {
@@ -840,7 +841,9 @@ fun Server.registerTools(api: MontoyaApi, context: McpToolContext) {
             requestResponseList
         )
 
-        api.siteMap().add(issue)
+        if (!safeAddIssueToSiteMap(api, issue)) {
+            return@mcpTool "Error: Site Map API unavailable. Issue was not added."
+        }
         "Issue created: $issueNameWithPrefix (Severity: $severity, Confidence: $confidence)"
     }
 }
@@ -851,6 +854,49 @@ private fun truncateIfNeeded(serialized: String, maxBodyBytes: Int): String {
     if (bytes.size <= limit) return serialized
     val truncated = String(bytes, 0, limit, Charsets.UTF_8)
     return "$truncated... (truncated ${bytes.size} bytes to ${limit} bytes)"
+}
+
+private fun safeSiteMapIssues(
+    api: MontoyaApi
+): List<burp.api.montoya.scanner.audit.issues.AuditIssue> {
+    val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return emptyList()
+    return runCatching { siteMap.issues().toList() }.getOrElse {
+        logSiteMapUnavailableOnce(api, "issues", it)
+        emptyList()
+    }
+}
+
+private fun safeSiteMapEntries(
+    api: MontoyaApi,
+    filter: burp.api.montoya.sitemap.SiteMapFilter? = null
+): List<burp.api.montoya.http.message.HttpRequestResponse> {
+    val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return emptyList()
+    return runCatching {
+        if (filter == null) siteMap.requestResponses().toList() else siteMap.requestResponses(filter).toList()
+    }.getOrElse {
+        logSiteMapUnavailableOnce(api, "entries", it)
+        emptyList()
+    }
+}
+
+private fun safeAddIssueToSiteMap(
+    api: MontoyaApi,
+    issue: burp.api.montoya.scanner.audit.issues.AuditIssue
+): Boolean {
+    return runCatching {
+        api.siteMap().add(issue)
+        true
+    }.getOrElse {
+        logSiteMapUnavailableOnce(api, "add", it)
+        false
+    }
+}
+
+private fun logSiteMapUnavailableOnce(api: MontoyaApi, area: String, error: Throwable) {
+    val key = "$area:${error::class.java.name}:${error.message.orEmpty()}"
+    if (!siteMapWarningKeys.add(key)) return
+    val detail = error.message ?: error::class.java.simpleName
+    api.logging().logToError("[MCP] SiteMap $area unavailable: $detail")
 }
 
 private fun decodeJwt(token: String): String {
@@ -1356,7 +1402,7 @@ object McpToolExecutor {
                 "scanner_issues" -> {
                     ensurePro(context, resolvedName)
                     val input = decode<GetScannerIssues>(normalizedArgs)
-                    val issues = api.siteMap().issues()
+                    val issues = safeSiteMapIssues(api)
                     val seq = if (context.determinismMode) {
                         issues.sortedBy { it.name() }.asSequence()
                     } else {
@@ -1457,7 +1503,7 @@ object McpToolExecutor {
                             val audit = task as? Audit ?: return@runTool "Task not found or not an audit: ${input.taskId}"
                             audit.issues()
                         }
-                        input.allIssues -> api.siteMap().issues()
+                        input.allIssues -> safeSiteMapIssues(api)
                         else -> return@runTool "Provide taskId or set allIssues=true"
                     }
                     api.scanner().generateReport(issues, formatEnum, pathObj)
@@ -1565,7 +1611,7 @@ object McpToolExecutor {
                 }
                 "site_map" -> {
                     val input = decode<GetSiteMap>(normalizedArgs)
-                    val items = api.siteMap().requestResponses()
+                    val items = safeSiteMapEntries(api)
                     val seq = if (context.determinismMode) {
                         items.sortedBy { it.request()?.url().orEmpty() }.asSequence()
                     } else {
@@ -1581,7 +1627,7 @@ object McpToolExecutor {
                     val filter = burp.api.montoya.sitemap.SiteMapFilter { node ->
                         compiledRegex.matcher(node.url()).find()
                     }
-                    val items = api.siteMap().requestResponses(filter)
+                    val items = safeSiteMapEntries(api, filter)
                     val seq = if (context.determinismMode) {
                         items.sortedBy { it.request()?.url().orEmpty() }.asSequence()
                     } else {

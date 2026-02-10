@@ -54,6 +54,7 @@ class PassiveAiScanner(
         Thread(r, "PassiveAiScanner").apply { isDaemon = true }
     }
     private val findings = ArrayDeque<PassiveAiFinding>(50)
+    private val siteMapWarningLogged = AtomicBoolean(false)
     private var registered = false
     
     // Reference to active scanner for auto-queueing
@@ -653,21 +654,24 @@ $metadata
                         severity,
                         listOf(requestResponse)
                     )
-                    api.siteMap().add(issue)
-                    issuesFound.incrementAndGet()
-                    api.logging().logToOutput("[PassiveAiScanner] Issue: $title | $rawSeverity | $confidence%")
+                    if (!addIssueToSiteMap(issue)) {
+                        false
+                    } else {
+                        issuesFound.incrementAndGet()
+                        api.logging().logToOutput("[PassiveAiScanner] Issue: $title | $rawSeverity | $confidence%")
 
-                    // Auto-queue to active scanner if enabled
-                    queueToActiveScanner(requestResponse, title, rawSeverity, detail, confidence, settings)
+                        // Auto-queue to active scanner if enabled
+                        queueToActiveScanner(requestResponse, title, rawSeverity, detail, confidence, settings)
 
-                    audit.logEvent("passive_ai_issue", mapOf(
-                        "title" to title,
-                        "severity" to rawSeverity,
-                        "confidence" to confidence.toString(),
-                        "url" to requestResponse.request().url(),
-                        "source" to source
-                    ))
-                    true
+                        audit.logEvent("passive_ai_issue", mapOf(
+                            "title" to title,
+                            "severity" to rawSeverity,
+                            "confidence" to confidence.toString(),
+                            "url" to requestResponse.request().url(),
+                            "source" to source
+                        ))
+                        true
+                    }
                 }
             } catch (e: Exception) {
                 api.logging().logToError("[PassiveAiScanner] Failed to create issue: ${e.message}")
@@ -715,7 +719,29 @@ $metadata
     }
 
     private fun hasExistingIssue(name: String, baseUrl: String): Boolean {
-        return api.siteMap().issues().any { it.name() == name && it.baseUrl() == baseUrl }
+        val issues = runCatching { api.siteMap().issues().toList() }.getOrElse {
+            logSiteMapWarningOnce(it)
+            return false
+        }
+        return issues.any { issue ->
+            runCatching { issue.name() == name && issue.baseUrl() == baseUrl }.getOrDefault(false)
+        }
+    }
+
+    private fun addIssueToSiteMap(issue: AuditIssue): Boolean {
+        return runCatching {
+            api.siteMap().add(issue)
+            true
+        }.getOrElse {
+            logSiteMapWarningOnce(it)
+            false
+        }
+    }
+
+    private fun logSiteMapWarningOnce(error: Throwable) {
+        if (!siteMapWarningLogged.compareAndSet(false, true)) return
+        val detail = error.message ?: error::class.java.simpleName
+        api.logging().logToError("[PassiveAiScanner] SiteMap API unavailable, skipping issue sync: $detail")
     }
     
     private fun queueToActiveScanner(
