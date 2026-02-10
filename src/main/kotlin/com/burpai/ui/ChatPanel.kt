@@ -116,18 +116,18 @@ class ChatPanel(
         })
 
         clearChatBtn.font = UiTheme.Typography.aiButton
-        clearChatBtn.margin = java.awt.Insets(6, 8, 6, 8)
+        clearChatBtn.margin = java.awt.Insets(6, 10, 6, 10)
         clearChatBtn.isFocusPainted = false
         clearChatBtn.addActionListener { clearCurrentChat() }
 
         toolsBtn.font = UiTheme.Typography.aiButton
-        toolsBtn.margin = java.awt.Insets(6, 8, 6, 8)
+        toolsBtn.margin = java.awt.Insets(6, 10, 6, 10)
         toolsBtn.isFocusPainted = false
         toolsBtn.toolTipText = "Browse and invoke MCP tools. Select a tool to insert /tool <id> {} into input. Fill JSON args and Send to execute."
         toolsBtn.addActionListener { showToolsMenu() }
 
         newSessionBtn.font = UiTheme.Typography.aiButton
-        newSessionBtn.margin = java.awt.Insets(6, 8, 6, 8)
+        newSessionBtn.margin = java.awt.Insets(6, 10, 6, 10)
         newSessionBtn.isFocusPainted = false
         newSessionBtn.addActionListener { createSession("Chat ${sessionsModel.size + 1}") }
 
@@ -248,8 +248,8 @@ class ChatPanel(
         emptyButton.foreground = UiTheme.Colors.onPrimary
         emptyButton.isOpaque = true
         emptyButton.isFocusPainted = false
-        emptyButton.border = EmptyBorder(6, 8, 6, 8)
-        emptyButton.margin = java.awt.Insets(6, 8, 6, 8)
+        emptyButton.border = EmptyBorder(6, 10, 6, 10)
+        emptyButton.margin = java.awt.Insets(6, 10, 6, 10)
         emptyButton.addActionListener { createSession("Chat ${sessionsModel.size + 1}") }
 
         val stack = JPanel()
@@ -274,8 +274,8 @@ class ChatPanel(
         chatEmptyButton.foreground = UiTheme.Colors.onPrimary
         chatEmptyButton.isOpaque = true
         chatEmptyButton.isFocusPainted = false
-        chatEmptyButton.border = EmptyBorder(6, 8, 6, 8)
-        chatEmptyButton.margin = java.awt.Insets(6, 8, 6, 8)
+        chatEmptyButton.border = EmptyBorder(6, 10, 6, 10)
+        chatEmptyButton.margin = java.awt.Insets(6, 10, 6, 10)
         chatEmptyButton.addActionListener { createSession("Chat ${sessionsModel.size + 1}") }
 
         val stack = JPanel()
@@ -364,7 +364,7 @@ class ChatPanel(
         })
 
         sendBtn.font = UiTheme.Typography.aiButton
-        sendBtn.margin = java.awt.Insets(6, 8, 6, 8)
+        sendBtn.margin = java.awt.Insets(6, 10, 6, 10)
         sendBtn.isFocusPainted = false
         sendBtn.addActionListener { sendFromInput() }
         updatePrivacyPill()
@@ -1022,7 +1022,7 @@ class ChatPanel(
 
             copyBtn.font = UiTheme.Typography.aiButton
             copyBtn.isFocusPainted = false
-            copyBtn.margin = java.awt.Insets(6, 8, 6, 8)
+            copyBtn.margin = java.awt.Insets(6, 10, 6, 10)
             copyBtn.border = javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline)
             copyBtn.background = UiTheme.Colors.surface
             copyBtn.foreground = UiTheme.Colors.onSurface
@@ -1033,7 +1033,7 @@ class ChatPanel(
 
             saveNoteBtn.font = UiTheme.Typography.aiButton
             saveNoteBtn.isFocusPainted = false
-            saveNoteBtn.margin = java.awt.Insets(6, 8, 6, 8)
+            saveNoteBtn.margin = java.awt.Insets(6, 10, 6, 10)
             saveNoteBtn.border = javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline)
             saveNoteBtn.background = UiTheme.Colors.surface
             saveNoteBtn.foreground = UiTheme.Colors.onSurface

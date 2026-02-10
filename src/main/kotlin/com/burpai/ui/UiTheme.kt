@@ -64,16 +64,16 @@ object UiTheme {
         )
 
         val headline: Font get() = Font(sansFamily, Font.BOLD, (baseSize * 1.7f).roundToInt())
-        val title: Font get() = Font(sansFamily, Font.BOLD, (baseSize * 1.2f).roundToInt())
-        val body: Font get() = Font(sansFamily, Font.PLAIN, baseSize)
-        val label: Font get() = Font(sansFamily, Font.BOLD, baseSize)
-        val mono: Font get() = Font(monoFamily, Font.PLAIN, baseSize)
+        val title: Font get() = Font(sansFamily, Font.BOLD, maxOf((baseSize * 1.25f).roundToInt(), 16))
+        val body: Font get() = Font(sansFamily, Font.PLAIN, maxOf(baseSize, 13))
+        val label: Font get() = Font(sansFamily, Font.BOLD, maxOf(baseSize, 13))
+        val mono: Font get() = Font(monoFamily, Font.PLAIN, maxOf(baseSize, 13))
 
         // Step 8.1 polish targets for AI Agent tab (spacing/typography only)
-        val aiHeader: Font get() = Font(sansFamily, Font.BOLD, 14)
-        val aiText: Font get() = Font(sansFamily, Font.PLAIN, 12)
+        val aiHeader: Font get() = Font(sansFamily, Font.BOLD, 15)
+        val aiText: Font get() = Font(sansFamily, Font.PLAIN, 13)
         val aiButton: Font get() = Font(sansFamily, Font.BOLD, 13)
-        val aiStatus: Font get() = Font(sansFamily, Font.PLAIN, 11)
+        val aiStatus: Font get() = Font(sansFamily, Font.PLAIN, 12)
         val aiMono: Font get() = Font(monoFamily, Font.PLAIN, 13)
     }
 }

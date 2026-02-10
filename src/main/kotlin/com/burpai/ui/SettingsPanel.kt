@@ -228,7 +228,7 @@ class SettingsPanel(
 
     init {
         refreshProfileOptions()
-        val tabContentInsets = EmptyBorder(8, 12, 12, 12)
+        val tabContentInsets = EmptyBorder(12, 14, 14, 14)
 
         applyFieldStyle(mcpHost)
         applyFieldStyle(mcpKeystorePath)
@@ -843,12 +843,12 @@ class SettingsPanel(
         subtitleLabel.foreground = UiTheme.Colors.onSurfaceVariant
 
         header.add(titleLabel)
-        header.add(Box.createRigidArea(java.awt.Dimension(0, 4)))
+        header.add(Box.createRigidArea(java.awt.Dimension(0, 6)))
         header.add(subtitleLabel)
 
         return JPanel(BorderLayout()).apply {
             background = UiTheme.Colors.surface
-            border = EmptyBorder(6, 8, 8, 8)
+            border = EmptyBorder(10, 12, 12, 12)
             add(header, BorderLayout.NORTH)
             add(content, BorderLayout.CENTER)
         }
@@ -881,7 +881,7 @@ class SettingsPanel(
             section.alignmentX = JPanel.LEFT_ALIGNMENT
             content.add(section)
             if (index < sections.lastIndex) {
-                content.add(Box.createRigidArea(java.awt.Dimension(0, 8)))
+                content.add(Box.createRigidArea(java.awt.Dimension(0, 10)))
             }
         }
         val scroll = configureVerticalScroll(JScrollPane(content))
@@ -893,7 +893,7 @@ class SettingsPanel(
     private fun formGrid(): JPanel {
         val grid = JPanel(GridBagLayout())
         grid.background = UiTheme.Colors.surface
-        grid.border = EmptyBorder(2, 0, 6, 0)
+        grid.border = EmptyBorder(4, 0, 8, 0)
         return grid
     }
 
@@ -903,7 +903,7 @@ class SettingsPanel(
         c.gridx = 0
         c.gridy = row
         c.anchor = GridBagConstraints.WEST
-        c.insets = Insets(3, 8, 3, 8)
+        c.insets = Insets(6, 10, 6, 10)
         val label = JLabel(labelText)
         label.font = UiTheme.Typography.body
         label.foreground = UiTheme.Colors.onSurface
@@ -914,7 +914,7 @@ class SettingsPanel(
         c2.gridy = row
         c2.gridwidth = 3
         c2.weightx = 1.0
-        c2.insets = Insets(3, 0, 3, 8)
+        c2.insets = Insets(6, 0, 6, 10)
         
         // Don't expand small components (spinners, combos, small text fields)
         val isSmallComponent = field is JSpinner || field is JComboBox<*> || field is JCheckBox || field is ToggleSwitch ||
@@ -942,7 +942,7 @@ class SettingsPanel(
         c1.gridx = 0
         c1.gridy = row
         c1.anchor = GridBagConstraints.WEST
-        c1.insets = Insets(3, 8, 3, 8)
+        c1.insets = Insets(6, 10, 6, 10)
         val left = JLabel(leftLabel)
         left.font = UiTheme.Typography.body
         left.foreground = UiTheme.Colors.onSurface
@@ -952,7 +952,7 @@ class SettingsPanel(
         c2.gridx = 1
         c2.gridy = row
         c2.weightx = 0.5
-        c2.insets = Insets(3, 0, 3, 12)
+        c2.insets = Insets(6, 0, 6, 12)
         
         val isLeftSmall = leftField is JSpinner || leftField is JComboBox<*> || leftField is JCheckBox || leftField is ToggleSwitch ||
             (leftField is JTextField && leftField.columns <= 20)
@@ -968,7 +968,7 @@ class SettingsPanel(
         c3.gridx = 2
         c3.gridy = row
         c3.anchor = GridBagConstraints.WEST
-        c3.insets = Insets(3, 8, 3, 8)
+        c3.insets = Insets(6, 10, 6, 10)
         val right = JLabel(rightLabel)
         right.font = UiTheme.Typography.body
         right.foreground = UiTheme.Colors.onSurface
@@ -978,7 +978,7 @@ class SettingsPanel(
         c4.gridx = 3
         c4.gridy = row
         c4.weightx = 0.5
-        c4.insets = Insets(3, 0, 3, 8)
+        c4.insets = Insets(6, 0, 6, 10)
         
         val isRightSmall = rightField is JSpinner || rightField is JComboBox<*> || rightField is JCheckBox || rightField is ToggleSwitch ||
             (rightField is JTextField && rightField.columns <= 20)
@@ -1012,7 +1012,7 @@ class SettingsPanel(
     private fun helpSection(): JPanel {
         val body = JPanel(BorderLayout())
         body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
+        body.border = EmptyBorder(10, 12, 12, 12)
         val helpHtml = """
             <html>
               <body style="font-family: sans-serif; font-size: 12px;">
@@ -1030,7 +1030,7 @@ class SettingsPanel(
         val helpPane = JEditorPane("text/html", helpHtml)
         helpPane.isEditable = false
         helpPane.isOpaque = false
-        helpPane.border = EmptyBorder(6, 8, 8, 8)
+        helpPane.border = EmptyBorder(8, 10, 10, 10)
         helpPane.addHyperlinkListener { event ->
             if (event.eventType == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED) {
                 try {
@@ -1056,7 +1056,7 @@ class SettingsPanel(
     private fun passiveAiScannerSection(): JPanel {
         val body = JPanel(BorderLayout())
         body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
+        body.border = EmptyBorder(10, 12, 12, 12)
 
         // Style components
         passiveAiEnabled.font = UiTheme.Typography.body
@@ -1351,7 +1351,7 @@ class SettingsPanel(
     private fun activeAiScannerSection(): JPanel {
         val body = JPanel(BorderLayout())
         body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
+        body.border = EmptyBorder(10, 12, 12, 12)
 
         // Style components
         activeAiEnabled.font = UiTheme.Typography.body
@@ -1510,7 +1510,7 @@ class SettingsPanel(
     private fun promptSection(): JPanel {
         val body = JPanel(BorderLayout())
         body.background = UiTheme.Colors.surface
-        body.border = EmptyBorder(6, 8, 8, 8)
+        body.border = EmptyBorder(10, 12, 12, 12)
 
         val content = JPanel()
         content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
@@ -1693,7 +1693,7 @@ class SettingsPanel(
         }
         toolsPanel.layout = BoxLayout(toolsPanel, BoxLayout.Y_AXIS)
         toolsPanel.background = UiTheme.Colors.surface
-        toolsPanel.border = EmptyBorder(6, 8, 8, 8)
+        toolsPanel.border = EmptyBorder(10, 12, 12, 12)
 
         val selectAll = JButton("Select all").apply {
             font = UiTheme.Typography.label

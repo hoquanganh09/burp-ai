@@ -132,8 +132,8 @@ class MainTab(
         settingsButton.background = UiTheme.Colors.primary
         settingsButton.foreground = UiTheme.Colors.onPrimary
         settingsButton.isOpaque = true
-        settingsButton.border = EmptyBorder(6, 8, 6, 8)
-        settingsButton.margin = java.awt.Insets(6, 8, 6, 8)
+        settingsButton.border = EmptyBorder(6, 10, 6, 10)
+        settingsButton.margin = java.awt.Insets(6, 10, 6, 10)
         settingsButton.isFocusPainted = false
         settingsButton.addActionListener { openSettingsStudio() }
         val moddedByLabel = JLabel("moded by 0x4nh8ii").apply {
@@ -181,7 +181,7 @@ class MainTab(
         passiveToggle.toolTipText = "Enable AI passive scanner."
         activeToggle.toolTipText = "Enable AI active scanner."
         val hero = CardPanel(BorderLayout(), 18).apply {
-            border = EmptyBorder(12, 12, 12, 12)
+            border = EmptyBorder(14, 14, 14, 14)
             add(titleBox, BorderLayout.CENTER)
             add(headerActions, BorderLayout.EAST)
         }
@@ -192,16 +192,16 @@ class MainTab(
         val north = JPanel()
         north.layout = BoxLayout(north, BoxLayout.Y_AXIS)
         north.background = UiTheme.Colors.surface
-        north.border = EmptyBorder(12, 12, 8, 12)
+        north.border = EmptyBorder(14, 14, 10, 14)
         north.add(hero)
-        north.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+        north.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
         north.add(commandBar)
-        north.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+        north.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
         north.add(dependencyBanner)
 
         val leftColumn = JPanel(BorderLayout()).apply {
             background = UiTheme.Colors.surface
-            border = EmptyBorder(0, 10, 10, 10)
+            border = EmptyBorder(0, 12, 12, 8)
             add(wrapInCard(chatPanel.sessionsComponent()), BorderLayout.CENTER)
         }
 
@@ -218,8 +218,8 @@ class MainTab(
         ).apply {
             resizeWeight = 0.78
             setDividerLocation(0.78)
-            border = EmptyBorder(0, 0, 0, 0)
-            dividerSize = 12
+            border = EmptyBorder(0, 8, 0, 12)
+            dividerSize = 14
         }
 
         val mainContent = JSplitPane(
@@ -229,8 +229,8 @@ class MainTab(
         )
         mainContent.resizeWeight = 0.22
         mainContent.setDividerLocation(0.22)
-        mainContent.border = EmptyBorder(0, 0, 0, 0)
-        mainContent.dividerSize = 12
+        mainContent.border = EmptyBorder(0, 10, 12, 10)
+        mainContent.dividerSize = 14
 
         root.add(north, BorderLayout.NORTH)
         root.add(mainContent, BorderLayout.CENTER)
@@ -246,13 +246,13 @@ class MainTab(
     private fun buildCommandBar(): JComponent {
         styleStatusLabel(mcpStatusLabel)
         summarizeSiteMapButton.font = UiTheme.Typography.aiButton
-        summarizeSiteMapButton.margin = java.awt.Insets(6, 8, 6, 8)
+        summarizeSiteMapButton.margin = java.awt.Insets(6, 10, 6, 10)
         summarizeSiteMapButton.isFocusPainted = false
         summarizeSiteMapButton.toolTipText = "Analyze all in-scope hosts"
         summarizeSiteMapButton.addActionListener { summarizeEntireSiteMap() }
 
         val bar = CardPanel(BorderLayout(), 16)
-        val content = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 16, 8))
+        val content = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 18, 8))
         content.isOpaque = false
 
         backendPicker.preferredSize = Dimension(220, backendPicker.preferredSize.height)
@@ -280,13 +280,13 @@ class MainTab(
         group.layout = BoxLayout(group, BoxLayout.Y_AXIS)
         group.isOpaque = false
         val label = JLabel(title)
-        label.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 12f)
+        label.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 13f)
         label.foreground = UiTheme.Colors.onSurfaceVariant
         val row = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0))
         row.isOpaque = false
         components.forEach { row.add(it) }
         group.add(label)
-        group.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+        group.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
         group.add(row)
         return group
     }
@@ -304,11 +304,11 @@ class MainTab(
         dashboardProgressBar.foreground = UiTheme.Colors.primary
         dashboardProgressBar.background = UiTheme.Colors.outlineVariant
         dashboardProgressBar.border = javax.swing.border.LineBorder(UiTheme.Colors.outline, 1, true)
-        dashboardHighLabel.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 12f)
+        dashboardHighLabel.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 14f)
         dashboardHighLabel.foreground = java.awt.Color(0xB3261E)
-        dashboardMediumLabel.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 12f)
+        dashboardMediumLabel.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 14f)
         dashboardMediumLabel.foreground = java.awt.Color(0xC46E00)
-        dashboardLowLabel.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 12f)
+        dashboardLowLabel.font = UiTheme.Typography.aiText.deriveFont(java.awt.Font.BOLD, 14f)
         dashboardLowLabel.foreground = java.awt.Color(0x1E7D3C)
         dashboardLastSummaryLabel.font = UiTheme.Typography.aiText
         dashboardLastSummaryLabel.foreground = UiTheme.Colors.onSurfaceVariant
@@ -319,17 +319,17 @@ class MainTab(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             add(dashboardRequestsLabel)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
             add(dashboardProgressBar)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
             add(dashboardHighLabel)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
             add(dashboardMediumLabel)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
             add(dashboardLowLabel)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
             add(dashboardLastSummaryLabel)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
             add(dashboardUpdatedLabel)
         }
 
@@ -337,12 +337,13 @@ class MainTab(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             add(title)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
             add(metrics)
         }
 
         return CardPanel(BorderLayout(), 14).apply {
-            border = EmptyBorder(12, 12, 12, 12)
+            background = UiTheme.Colors.surface
+            border = EmptyBorder(14, 14, 14, 14)
             add(left, BorderLayout.CENTER)
         }
     }
@@ -352,17 +353,17 @@ class MainTab(
         statusLabel.text = "Idle"
 
         backendStatusLabel.font = UiTheme.Typography.aiStatus
-        backendStatusLabel.foreground = UiTheme.Colors.onSurfaceVariant
+        backendStatusLabel.foreground = UiTheme.Colors.onSurface
         sessionLabel.font = UiTheme.Typography.aiStatus
-        sessionLabel.foreground = UiTheme.Colors.onSurfaceVariant
+        sessionLabel.foreground = UiTheme.Colors.onSurface
         summaryAgeLabel.font = UiTheme.Typography.aiStatus
-        summaryAgeLabel.foreground = UiTheme.Colors.onSurfaceVariant
+        summaryAgeLabel.foreground = UiTheme.Colors.onSurface
 
         val left = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 12, 0)).apply {
             isOpaque = false
             add(JLabel("State:").apply {
-                font = UiTheme.Typography.aiStatus.deriveFont(java.awt.Font.BOLD, 11f)
-                foreground = UiTheme.Colors.onSurfaceVariant
+                font = UiTheme.Typography.aiStatus.deriveFont(java.awt.Font.BOLD, 12f)
+                foreground = UiTheme.Colors.onSurface
             })
             add(statusLabel)
             add(backendStatusLabel)
@@ -374,7 +375,7 @@ class MainTab(
         }
 
         return CardPanel(BorderLayout(), 12).apply {
-            border = EmptyBorder(8, 12, 8, 12)
+            border = EmptyBorder(10, 14, 10, 14)
             add(left, BorderLayout.WEST)
             add(right, BorderLayout.EAST)
         }
@@ -394,13 +395,13 @@ class MainTab(
 
         val runButton = JButton("\uD83E\uDDE0 Run Summary").apply {
             font = UiTheme.Typography.aiButton
-            margin = java.awt.Insets(6, 8, 6, 8)
+            margin = java.awt.Insets(6, 10, 6, 10)
             isFocusPainted = false
             addActionListener { summarizeEntireSiteMap() }
         }
         val clearButton = JButton("Clear").apply {
             font = UiTheme.Typography.aiButton
-            margin = java.awt.Insets(6, 8, 6, 8)
+            margin = java.awt.Insets(6, 10, 6, 10)
             isFocusPainted = false
             addActionListener { summaryOutputArea.text = "" }
         }
@@ -423,7 +424,7 @@ class MainTab(
 
         val header = JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = EmptyBorder(12, 12, 8, 12)
+            border = EmptyBorder(14, 14, 10, 14)
             add(titleStack, BorderLayout.CENTER)
             add(actionStack, BorderLayout.EAST)
         }
@@ -438,7 +439,7 @@ class MainTab(
         summaryOutputArea.text = "Run summary to analyze the current Burp Site Map."
 
         val scroll = JScrollPane(summaryOutputArea).apply {
-            border = EmptyBorder(0, 12, 12, 12)
+            border = EmptyBorder(0, 14, 14, 14)
             viewport.background = UiTheme.Colors.inputBackground
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
             verticalScrollBar.unitIncrement = 16
@@ -1109,7 +1110,7 @@ class MainTab(
     private fun styleStatusLabel(label: JLabel) {
         label.font = UiTheme.Typography.aiStatus
         label.isOpaque = true
-        label.border = EmptyBorder(3, 8, 3, 8)
+        label.border = EmptyBorder(4, 10, 4, 10)
         label.foreground = UiTheme.Colors.onSurface
         label.background = UiTheme.Colors.outlineVariant
     }

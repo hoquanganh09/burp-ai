@@ -20,7 +20,7 @@ class BottomTabsPanel(private val settingsPanel: SettingsPanel) {
 
     init {
         root.background = UiTheme.Colors.surface
-        root.border = EmptyBorder(10, 10, 10, 10)
+        root.border = EmptyBorder(12, 12, 12, 12)
 
         val header = buildHeader()
         val content = buildContentTabs()
@@ -36,21 +36,21 @@ class BottomTabsPanel(private val settingsPanel: SettingsPanel) {
     private fun buildHeader(): JComponent {
         val wrapper = JPanel(BorderLayout())
         wrapper.background = UiTheme.Colors.surface
-        wrapper.border = EmptyBorder(4, 4, 10, 4)
+        wrapper.border = EmptyBorder(6, 6, 12, 6)
 
         val title = JLabel("Settings Studio")
-        title.font = UiTheme.Typography.title
+        title.font = UiTheme.Typography.headline.deriveFont(20f)
         title.foreground = UiTheme.Colors.onSurface
 
         val subtitle = JLabel("Fine-tune your agent, scanners, and privacy controls.")
-        subtitle.font = UiTheme.Typography.body
+        subtitle.font = UiTheme.Typography.aiText
         subtitle.foreground = UiTheme.Colors.onSurfaceVariant
 
         val stack = JPanel()
         stack.layout = javax.swing.BoxLayout(stack, javax.swing.BoxLayout.Y_AXIS)
         stack.isOpaque = false
         stack.add(title)
-        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 4)))
+        stack.add(javax.swing.Box.createRigidArea(Dimension(0, 6)))
         stack.add(subtitle)
 
         wrapper.add(stack, BorderLayout.CENTER)
@@ -62,7 +62,7 @@ class BottomTabsPanel(private val settingsPanel: SettingsPanel) {
         primaryTabs.addTab("Backend", buildBackendWorkspace())
         primaryTabs.addTab("Privacy & Logging", settingsPanel.privacyTabComponent())
         primaryTabs.addTab("Prompt Templates", settingsPanel.promptsTabComponent())
-        primaryTabs.addTab("Passive & Active Scanner", buildScannerWorkspace())
+        primaryTabs.addTab("Scanners", buildScannerWorkspace())
         return primaryTabs
     }
 
@@ -93,20 +93,22 @@ class BottomTabsPanel(private val settingsPanel: SettingsPanel) {
     }
 
     private fun buildFooter(): JComponent {
-        saveButton.font = UiTheme.Typography.label
+        saveButton.font = UiTheme.Typography.aiButton
         saveButton.background = UiTheme.Colors.primary
         saveButton.foreground = UiTheme.Colors.onPrimary
         saveButton.isOpaque = true
-        saveButton.border = EmptyBorder(8, 14, 8, 14)
+        saveButton.border = EmptyBorder(8, 10, 8, 10)
         saveButton.isFocusPainted = false
+        saveButton.margin = java.awt.Insets(6, 10, 6, 10)
         saveButton.addActionListener { settingsPanel.saveSettings() }
 
-        restoreButton.font = UiTheme.Typography.label
+        restoreButton.font = UiTheme.Typography.aiButton
         restoreButton.background = UiTheme.Colors.surface
         restoreButton.foreground = UiTheme.Colors.primary
         restoreButton.isOpaque = true
         restoreButton.border = LineBorder(UiTheme.Colors.outline, 1, true)
         restoreButton.isFocusPainted = false
+        restoreButton.margin = java.awt.Insets(6, 10, 6, 10)
         restoreButton.addActionListener { settingsPanel.restoreDefaultsWithConfirmation() }
 
         val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 12, 6))

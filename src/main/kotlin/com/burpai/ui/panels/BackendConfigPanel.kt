@@ -407,14 +407,14 @@ class BackendConfigPanel(
             gridx = 0
             gridy = row
             anchor = GridBagConstraints.WEST
-            insets = Insets(4, 0, 4, 10)
+            insets = Insets(6, 0, 6, 10)
         }
         val fieldConstraints = GridBagConstraints().apply {
             gridx = 1
             gridy = row
             weightx = 1.0
             fill = GridBagConstraints.HORIZONTAL
-            insets = Insets(4, 0, 4, 0)
+            insets = Insets(6, 0, 6, 0)
         }
         panel.add(label, labelConstraints)
         panel.add(field, fieldConstraints)
@@ -425,13 +425,13 @@ class BackendConfigPanel(
             gridx = 0
             gridy = row
             anchor = GridBagConstraints.WEST
-            insets = Insets(4, 0, 4, 10)
+            insets = Insets(6, 0, 6, 10)
         }
         val buttonConstraints = GridBagConstraints().apply {
             gridx = 1
             gridy = row
             anchor = GridBagConstraints.WEST
-            insets = Insets(4, 0, 4, 0)
+            insets = Insets(6, 0, 6, 0)
         }
         panel.add(JLabel(""), labelConstraints)
         panel.add(button, buttonConstraints)
@@ -576,7 +576,7 @@ class BackendConfigPanel(
     }
 
     private fun styleCompactButton(button: JButton) {
-        button.margin = Insets(2, 8, 2, 8)
+        button.margin = Insets(4, 10, 4, 10)
         button.isFocusPainted = false
     }
 
