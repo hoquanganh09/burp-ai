@@ -20,12 +20,15 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JOptionPane
 import javax.swing.JScrollPane
+import javax.swing.JProgressBar
+import javax.swing.JSplitPane
 import javax.swing.JTabbedPane
 import javax.swing.JTextArea
 import javax.swing.SwingUtilities
@@ -60,6 +63,8 @@ class MainTab(
 
     private val statusLabel = JLabel("Idle")
     private val sessionLabel = JLabel("Session: -")
+    private val backendStatusLabel = JLabel("Backend: -")
+    private val summaryAgeLabel = JLabel("Last summary: never")
     private val settingsRepo = AgentSettingsRepository(api)
     private val mcpStatusTimer = Timer(1000) {
         updateMcpBadge()
@@ -72,14 +77,19 @@ class MainTab(
         DependencyBanner("MCP Server must be enabled. Toggle MCP to enable AI features.")
     private var syncingToggles = false
     private val settingsButton = JButton("Settings Studio")
-    private val summarizeSiteMapButton = JButton("Summarize Entire Site Map")
+    private val summarizeSiteMapButton = JButton("\uD83E\uDDE0 Summarize Entire Site Map")
     private val dashboardRequestsLabel = JLabel("Scanned requests: 0")
-    private val dashboardIssuesLabel = JLabel("Vulns: High 0 | Medium 0 | Low 0")
+    private val dashboardProgressBar = JProgressBar(0, 100)
+    private val dashboardHighLabel = JLabel("HIGH 0")
+    private val dashboardMediumLabel = JLabel("MEDIUM 0")
+    private val dashboardLowLabel = JLabel("LOW 0")
+    private val dashboardLastSummaryLabel = JLabel("Last summary: never")
     private val dashboardUpdatedLabel = JLabel("Updated: -")
     private val dashboardRefreshing = AtomicBoolean(false)
     private val summaryInProgress = AtomicBoolean(false)
     private val summaryOutputArea = JTextArea()
     private val summaryStatusLabel = JLabel("Ready")
+    private val lastSummaryCompletedAt = AtomicLong(0L)
     private val workspaceTabs = JTabbedPane()
     private val siteSummaryTab = JPanel(BorderLayout())
     private val dashboardTimer = Timer(2500) { refreshDashboard() }
@@ -170,7 +180,7 @@ class MainTab(
             add(headerActions, BorderLayout.EAST)
         }
         val commandBar = buildCommandBar()
-        val dashboardBar = buildDashboardBar()
+        val dashboardPanel = buildDashboardPanel()
         buildSiteSummaryTab()
 
         val north = JPanel()
@@ -180,8 +190,6 @@ class MainTab(
         north.add(hero)
         north.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
         north.add(commandBar)
-        north.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
-        north.add(dashboardBar)
         north.add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
         north.add(dependencyBanner)
 
@@ -197,10 +205,21 @@ class MainTab(
         workspaceTabs.addTab("Chat", wrapInCard(chatPanel.root))
         workspaceTabs.addTab("Site Summary", wrapInCard(siteSummaryTab))
 
-        val mainContent = javax.swing.JSplitPane(
-            javax.swing.JSplitPane.HORIZONTAL_SPLIT,
+        val centerRightSplit = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT,
+            workspaceTabs,
+            wrapInCard(dashboardPanel)
+        ).apply {
+            resizeWeight = 0.78
+            setDividerLocation(0.78)
+            border = EmptyBorder(0, 0, 0, 0)
+            dividerSize = 6
+        }
+
+        val mainContent = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT,
             leftColumn,
-            workspaceTabs
+            centerRightSplit
         )
         mainContent.resizeWeight = 0.22
         mainContent.setDividerLocation(0.22)
@@ -209,6 +228,7 @@ class MainTab(
 
         root.add(north, BorderLayout.NORTH)
         root.add(mainContent, BorderLayout.CENTER)
+        root.add(buildStatusBar(), BorderLayout.SOUTH)
 
         wireActions()
         renderStatus()
@@ -219,12 +239,9 @@ class MainTab(
 
     private fun buildCommandBar(): JComponent {
         styleStatusLabel(mcpStatusLabel)
-        styleStatusLabel(statusLabel)
-        sessionLabel.font = UiTheme.Typography.body
-        sessionLabel.foreground = UiTheme.Colors.onSurfaceVariant
         summarizeSiteMapButton.font = UiTheme.Typography.label
         summarizeSiteMapButton.isFocusPainted = false
-        summarizeSiteMapButton.toolTipText = "Summarize endpoints and attack surface from the entire Burp Site Map."
+        summarizeSiteMapButton.toolTipText = "Analyze all in-scope hosts"
         summarizeSiteMapButton.addActionListener { summarizeEntireSiteMap() }
 
         val bar = CardPanel(BorderLayout(), 16)
@@ -245,8 +262,6 @@ class MainTab(
         content.add(buildBarGroup("MCP", mcpToggle, mcpStatusLabel))
         content.add(buildBarGroup("Scanners", passiveLabel, passiveToggle, activeLabel, activeToggle))
         content.add(buildBarGroup("Backend", backendPicker))
-        content.add(buildBarGroup("Status", statusLabel))
-        content.add(buildBarGroup("Session", sessionLabel))
         content.add(buildBarGroup("Workspace", summarizeSiteMapButton))
 
         bar.add(content, BorderLayout.CENTER)
@@ -269,15 +284,27 @@ class MainTab(
         return group
     }
 
-    private fun buildDashboardBar(): JComponent {
+    private fun buildDashboardPanel(): JComponent {
         val title = JLabel("Smart Dashboard").apply {
             font = UiTheme.Typography.label
             foreground = UiTheme.Colors.onSurface
         }
         dashboardRequestsLabel.font = UiTheme.Typography.body
         dashboardRequestsLabel.foreground = UiTheme.Colors.onSurfaceVariant
-        dashboardIssuesLabel.font = UiTheme.Typography.body
-        dashboardIssuesLabel.foreground = UiTheme.Colors.onSurfaceVariant
+        dashboardProgressBar.isStringPainted = true
+        dashboardProgressBar.value = 0
+        dashboardProgressBar.string = "0 analyzed"
+        dashboardProgressBar.foreground = UiTheme.Colors.primary
+        dashboardProgressBar.background = UiTheme.Colors.outlineVariant
+        dashboardProgressBar.border = javax.swing.border.LineBorder(UiTheme.Colors.outline, 1, true)
+        dashboardHighLabel.font = UiTheme.Typography.label
+        dashboardHighLabel.foreground = java.awt.Color(0xB3261E)
+        dashboardMediumLabel.font = UiTheme.Typography.label
+        dashboardMediumLabel.foreground = java.awt.Color(0xC46E00)
+        dashboardLowLabel.font = UiTheme.Typography.label
+        dashboardLowLabel.foreground = java.awt.Color(0x1E7D3C)
+        dashboardLastSummaryLabel.font = UiTheme.Typography.body
+        dashboardLastSummaryLabel.foreground = UiTheme.Colors.onSurfaceVariant
         dashboardUpdatedLabel.font = UiTheme.Typography.body.deriveFont((UiTheme.Typography.body.size - 1).toFloat())
         dashboardUpdatedLabel.foreground = UiTheme.Colors.onSurfaceVariant
 
@@ -285,8 +312,18 @@ class MainTab(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             add(dashboardRequestsLabel)
-            add(javax.swing.Box.createRigidArea(Dimension(0, 3)))
-            add(dashboardIssuesLabel)
+            add(javax.swing.Box.createRigidArea(Dimension(0, 6)))
+            add(dashboardProgressBar)
+            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(dashboardHighLabel)
+            add(javax.swing.Box.createRigidArea(Dimension(0, 2)))
+            add(dashboardMediumLabel)
+            add(javax.swing.Box.createRigidArea(Dimension(0, 2)))
+            add(dashboardLowLabel)
+            add(javax.swing.Box.createRigidArea(Dimension(0, 8)))
+            add(dashboardLastSummaryLabel)
+            add(javax.swing.Box.createRigidArea(Dimension(0, 4)))
+            add(dashboardUpdatedLabel)
         }
 
         val left = JPanel().apply {
@@ -297,14 +334,38 @@ class MainTab(
             add(metrics)
         }
 
-        val right = JPanel(BorderLayout()).apply {
+        return CardPanel(BorderLayout(), 14).apply {
+            border = EmptyBorder(10, 12, 10, 12)
+            add(left, BorderLayout.CENTER)
+        }
+    }
+
+    private fun buildStatusBar(): JComponent {
+        styleStatusLabel(statusLabel)
+        statusLabel.text = "Idle"
+
+        backendStatusLabel.font = UiTheme.Typography.body
+        backendStatusLabel.foreground = UiTheme.Colors.onSurfaceVariant
+        sessionLabel.font = UiTheme.Typography.body
+        sessionLabel.foreground = UiTheme.Colors.onSurfaceVariant
+        summaryAgeLabel.font = UiTheme.Typography.body
+        summaryAgeLabel.foreground = UiTheme.Colors.onSurfaceVariant
+
+        val left = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 10, 0)).apply {
             isOpaque = false
-            add(dashboardUpdatedLabel, BorderLayout.NORTH)
+            add(JLabel("State:").apply { font = UiTheme.Typography.label; foreground = UiTheme.Colors.onSurfaceVariant })
+            add(statusLabel)
+            add(backendStatusLabel)
+            add(sessionLabel)
+        }
+        val right = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0)).apply {
+            isOpaque = false
+            add(summaryAgeLabel)
         }
 
-        return CardPanel(BorderLayout(), 14).apply {
-            border = EmptyBorder(10, 14, 10, 14)
-            add(left, BorderLayout.CENTER)
+        return CardPanel(BorderLayout(), 12).apply {
+            border = EmptyBorder(8, 12, 8, 12)
+            add(left, BorderLayout.WEST)
             add(right, BorderLayout.EAST)
         }
     }
@@ -321,7 +382,7 @@ class MainTab(
         summaryStatusLabel.font = UiTheme.Typography.body
         summaryStatusLabel.foreground = UiTheme.Colors.onSurfaceVariant
 
-        val runButton = JButton("Run Summary").apply {
+        val runButton = JButton("\uD83E\uDDE0 Run Summary").apply {
             font = UiTheme.Typography.label
             isFocusPainted = false
             addActionListener { summarizeEntireSiteMap() }
@@ -505,6 +566,8 @@ class MainTab(
                     summaryOutputArea.append("\n\n[Error] $message")
                 }
                 summaryOutputArea.caretPosition = summaryOutputArea.document.length
+            } else {
+                lastSummaryCompletedAt.set(System.currentTimeMillis())
             }
             refreshDashboard()
         }
@@ -672,23 +735,52 @@ class MainTab(
                 }
 
                 val timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                val summaryAge = formatRelativeSummaryAge(lastSummaryCompletedAt.get())
 
                 SwingUtilities.invokeLater {
                     dashboardRequestsLabel.text =
                         "Scanned requests: $totalScanned (Passive ${passiveStatus.requestsAnalyzed} | Active ${activeStatus.scansCompleted})"
-                    dashboardIssuesLabel.text = "Vulns: High $high | Medium $medium | Low $low"
+                    updateScanProgress(totalScanned)
+                    dashboardHighLabel.text = "HIGH $high"
+                    dashboardMediumLabel.text = "MEDIUM $medium"
+                    dashboardLowLabel.text = "LOW $low"
+                    dashboardLastSummaryLabel.text = "Last summary: $summaryAge"
+                    summaryAgeLabel.text = "Last summary: $summaryAge"
                     dashboardUpdatedLabel.text = "Updated: $timestamp"
                 }
             } catch (_: Throwable) {
                 // Keep dashboard resilient if Burp APIs are transient or unavailable.
                 SwingUtilities.invokeLater {
                     val timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                    dashboardIssuesLabel.text = "Vulns: High 0 | Medium 0 | Low 0"
+                    dashboardHighLabel.text = "HIGH 0"
+                    dashboardMediumLabel.text = "MEDIUM 0"
+                    dashboardLowLabel.text = "LOW 0"
                     dashboardUpdatedLabel.text = "Updated: $timestamp"
                 }
             } finally {
                 dashboardRefreshing.set(false)
             }
+        }
+    }
+
+    private fun updateScanProgress(totalScanned: Int) {
+        val safeTotal = totalScanned.coerceAtLeast(0)
+        val step = 50
+        val max = ((safeTotal / step) + 1) * step
+        dashboardProgressBar.maximum = max.coerceAtLeast(step)
+        dashboardProgressBar.value = safeTotal.coerceAtMost(dashboardProgressBar.maximum)
+        dashboardProgressBar.string = "$safeTotal analyzed"
+    }
+
+    private fun formatRelativeSummaryAge(timestamp: Long): String {
+        if (timestamp <= 0L) return "never"
+        val deltaMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
+        val seconds = deltaMs / 1000
+        return when {
+            seconds < 10 -> "just now"
+            seconds < 60 -> "${seconds}s ago"
+            seconds < 3600 -> "${seconds / 60} min ago"
+            else -> "${seconds / 3600} h ago"
         }
     }
 
@@ -904,12 +996,14 @@ class MainTab(
         SwingUtilities.invokeLater {
             val chatStatus = chatPanel.runtimeSummary()
             if (chatStatus.sessionId != null) {
-                statusLabel.text = "Status: ${chatStatus.state} | Backend: ${chatStatus.backendId ?: "-"}"
+                statusLabel.text = chatStatus.state
+                backendStatusLabel.text = "Backend: ${chatStatus.backendId ?: "-"}"
                 sessionLabel.text = "Session: ${chatStatus.sessionTitle ?: chatStatus.sessionId}"
                 updateStatusColor(chatStatus.state)
             } else {
                 val s = supervisor.status()
-                statusLabel.text = "Status: ${s.state} | Backend: ${s.backendId ?: "-"}"
+                statusLabel.text = s.state
+                backendStatusLabel.text = "Backend: ${s.backendId ?: "-"}"
                 val sessionId = supervisor.currentSessionId() ?: "-"
                 sessionLabel.text = "Session: $sessionId"
                 updateStatusColor(s.state)

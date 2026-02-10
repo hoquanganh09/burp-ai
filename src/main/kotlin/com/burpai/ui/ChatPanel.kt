@@ -21,6 +21,8 @@ import java.awt.FlowLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.net.URI
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -194,6 +196,27 @@ class ChatPanel(
         mcpAvailable = available
         updateChatAvailability()
         syncStateWithContext()
+    }
+
+    private fun saveAsBurpNote(noteText: String): String? {
+        val payload = noteText.trim()
+        if (payload.isBlank()) return null
+
+        val history = runCatching { api.proxy().history().toList() }.getOrNull().orEmpty()
+        if (history.isEmpty()) return null
+
+        val target = history.asReversed().firstOrNull { item ->
+            val url = item.request()?.url() ?: return@firstOrNull false
+            runCatching { api.scope().isInScope(url) }.getOrDefault(false)
+        } ?: history.lastOrNull()
+        if (target == null) return null
+
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+        val noteBlock = "[BurpAI $timestamp]\n${payload.take(12000)}"
+        val existing = target.annotations().notes().orEmpty().trim()
+        val merged = if (existing.isBlank()) noteBlock else "$existing\n\n$noteBlock"
+        target.annotations().setNotes(merged.take(32000))
+        return target.request()?.url()
     }
 
     fun refreshPrivacyMode() {
@@ -813,7 +836,7 @@ class ChatPanel(
         }
 
         fun addMessage(role: String, text: String) {
-            val message = ChatMessagePanel(role, text)
+            val message = ChatMessagePanel(role, text, onSaveNote = ::saveAsBurpNote)
             normalizeMessageComponent(message.root)
             messages.add(message.root)
             messages.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
@@ -828,7 +851,7 @@ class ChatPanel(
         }
 
         fun addStreamingMessage(role: String): StreamingMessage {
-            val message = ChatMessagePanel(role, "")
+            val message = ChatMessagePanel(role, "", onSaveNote = ::saveAsBurpNote)
             normalizeMessageComponent(message.root)
             messages.add(message.root)
             messages.add(javax.swing.Box.createRigidArea(Dimension(0, 10)))
@@ -869,7 +892,8 @@ class ChatPanel(
 
     private class ChatMessagePanel(
         private val role: String,
-        initialText: String
+        initialText: String,
+        private val onSaveNote: ((String) -> String?)? = null
     ) {
         private val isUser = role == "You"
         private val showSpinner = !isUser && initialText.isEmpty()
@@ -890,6 +914,7 @@ class ChatPanel(
         }
         private val rawText = StringBuilder(initialText)
         private val copyBtn = JButton("Copy")
+        private val saveNoteBtn = JButton("Save as Burp Note")
         private val spinnerLabel = JLabel("Thinking...")
         private var spinnerTimer: javax.swing.Timer? = null
         private val spinnerFrames = listOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -918,18 +943,6 @@ class ChatPanel(
             label.foreground = UiTheme.Colors.primary
             header.add(label, BorderLayout.WEST)
 
-            copyBtn.font = UiTheme.Typography.label
-            copyBtn.isFocusPainted = false
-            copyBtn.margin = java.awt.Insets(2, 6, 2, 6)
-            copyBtn.border = javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline)
-            copyBtn.background = UiTheme.Colors.surface
-            copyBtn.foreground = UiTheme.Colors.onSurface
-            copyBtn.addActionListener {
-                val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                clipboard.setContents(java.awt.datatransfer.StringSelection(rawText.toString()), null)
-            }
-            header.add(copyBtn, BorderLayout.EAST)
-
             // Spinner setup
             spinnerLabel.font = UiTheme.Typography.body
             spinnerLabel.foreground = UiTheme.Colors.onSurfaceVariant
@@ -947,8 +960,44 @@ class ChatPanel(
             contentPanel.add(spinnerLabel, BorderLayout.NORTH)
             contentPanel.add(editorPane, BorderLayout.CENTER)
 
+            copyBtn.font = UiTheme.Typography.label
+            copyBtn.isFocusPainted = false
+            copyBtn.margin = java.awt.Insets(2, 6, 2, 6)
+            copyBtn.border = javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline)
+            copyBtn.background = UiTheme.Colors.surface
+            copyBtn.foreground = UiTheme.Colors.onSurface
+            copyBtn.addActionListener {
+                val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                clipboard.setContents(java.awt.datatransfer.StringSelection(rawText.toString()), null)
+            }
+
+            saveNoteBtn.font = UiTheme.Typography.label
+            saveNoteBtn.isFocusPainted = false
+            saveNoteBtn.margin = java.awt.Insets(2, 6, 2, 6)
+            saveNoteBtn.border = javax.swing.BorderFactory.createLineBorder(UiTheme.Colors.outline)
+            saveNoteBtn.background = UiTheme.Colors.surface
+            saveNoteBtn.foreground = UiTheme.Colors.onSurface
+            saveNoteBtn.isVisible = !isUser && onSaveNote != null
+            saveNoteBtn.addActionListener {
+                val savedUrl = runCatching { onSaveNote?.invoke(rawText.toString()) }.getOrNull()
+                val (message, type) = if (!savedUrl.isNullOrBlank()) {
+                    "Saved note to latest proxy entry:\n$savedUrl" to javax.swing.JOptionPane.INFORMATION_MESSAGE
+                } else {
+                    "No suitable proxy history entry found to attach this note." to javax.swing.JOptionPane.WARNING_MESSAGE
+                }
+                javax.swing.JOptionPane.showMessageDialog(root, message, "BurpAI Note", type)
+            }
+
+            val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
+                isOpaque = false
+                border = EmptyBorder(6, 0, 0, 0)
+                add(copyBtn)
+                if (!isUser && onSaveNote != null) add(saveNoteBtn)
+            }
+
             bubble.add(header, BorderLayout.NORTH)
             bubble.add(contentPanel, BorderLayout.CENTER)
+            bubble.add(actionRow, BorderLayout.SOUTH)
 
             // Full width layout - bubble takes all available space
             root.add(bubble, BorderLayout.CENTER)

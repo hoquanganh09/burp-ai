@@ -1,57 +1,33 @@
 package com.burpai.ui
 
 import java.awt.BorderLayout
-import java.awt.CardLayout
-import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
-import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
-import javax.swing.JList
 import javax.swing.JPanel
-import javax.swing.JScrollPane
-import javax.swing.ListSelectionModel
-import javax.swing.SwingConstants
+import javax.swing.JTabbedPane
 import javax.swing.border.EmptyBorder
 import javax.swing.border.LineBorder
 
 class BottomTabsPanel(private val settingsPanel: SettingsPanel) {
     val root: JComponent = JPanel(BorderLayout())
 
-    private val cards = JPanel(CardLayout())
-    private val navList = JList<String>()
+    private val primaryTabs = JTabbedPane()
     private val saveButton = JButton("Save settings")
     private val restoreButton = JButton("Restore defaults")
-
-    private val sections = listOf(
-        "AI Backend" to settingsPanel.generalTabComponent(),
-        "AI Passive Scanner" to settingsPanel.passiveScannerTabComponent(),
-        "AI Active Scanner" to settingsPanel.activeScannerTabComponent(),
-        "MCP Server" to settingsPanel.mcpTabComponent(),
-        "Burp Integration" to settingsPanel.burpIntegrationTabComponent(),
-        "Prompt Templates" to settingsPanel.promptsTabComponent(),
-        "Privacy & Logging" to settingsPanel.privacyTabComponent(),
-        "Help" to settingsPanel.helpTabComponent()
-    )
 
     init {
         root.background = UiTheme.Colors.surface
         root.border = EmptyBorder(10, 10, 10, 10)
 
         val header = buildHeader()
-        val nav = buildNavigation()
-        val content = buildCards()
+        val content = buildContentTabs()
         val footer = buildFooter()
 
-        val body = JPanel(BorderLayout())
-        body.background = UiTheme.Colors.surface
-        body.add(nav, BorderLayout.WEST)
-        body.add(content, BorderLayout.CENTER)
-
         root.add(header, BorderLayout.NORTH)
-        root.add(body, BorderLayout.CENTER)
+        root.add(content, BorderLayout.CENTER)
         root.add(footer, BorderLayout.SOUTH)
 
         settingsPanel.setDialogParent(root)
@@ -81,38 +57,39 @@ class BottomTabsPanel(private val settingsPanel: SettingsPanel) {
         return wrapper
     }
 
-    private fun buildNavigation(): JComponent {
-        navList.model = javax.swing.DefaultListModel<String>().apply {
-            sections.forEach { addElement(it.first) }
-        }
-        navList.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        navList.selectedIndex = 0
-        navList.font = UiTheme.Typography.body
-        navList.background = UiTheme.Colors.surface
-        navList.foreground = UiTheme.Colors.onSurface
-        navList.cellRenderer = NavRenderer()
-        navList.addListSelectionListener { e ->
-            if (e.valueIsAdjusting) return@addListSelectionListener
-            val selected = navList.selectedValue ?: return@addListSelectionListener
-            (cards.layout as CardLayout).show(cards, selected)
-        }
-
-        val scroll = JScrollPane(navList)
-        scroll.border = LineBorder(UiTheme.Colors.outlineVariant, 1, true)
-        scroll.viewport.background = UiTheme.Colors.surface
-        scroll.preferredSize = Dimension(180, 300)
-        scroll.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-        scroll.verticalScrollBar.unitIncrement = 16
-        return scroll
+    private fun buildContentTabs(): JComponent {
+        styleTabs(primaryTabs)
+        primaryTabs.addTab("Backend", buildBackendWorkspace())
+        primaryTabs.addTab("Privacy & Logging", settingsPanel.privacyTabComponent())
+        primaryTabs.addTab("Prompt Templates", settingsPanel.promptsTabComponent())
+        primaryTabs.addTab("Passive & Active Scanner", buildScannerWorkspace())
+        return primaryTabs
     }
 
-    private fun buildCards(): JComponent {
-        cards.background = UiTheme.Colors.surface
-        sections.forEach { (label, component) ->
-            cards.add(component, label)
-        }
-        (cards.layout as CardLayout).show(cards, sections.first().first)
-        return cards
+    private fun buildBackendWorkspace(): JComponent {
+        val tabs = JTabbedPane()
+        styleTabs(tabs)
+        tabs.addTab("AI Backend", settingsPanel.generalTabComponent())
+        tabs.addTab("MCP Server", settingsPanel.mcpTabComponent())
+        tabs.addTab("Burp Integration", settingsPanel.burpIntegrationTabComponent())
+        tabs.addTab("Help", settingsPanel.helpTabComponent())
+        return tabs
+    }
+
+    private fun buildScannerWorkspace(): JComponent {
+        val tabs = JTabbedPane()
+        styleTabs(tabs)
+        tabs.addTab("Passive Scanner", settingsPanel.passiveScannerTabComponent())
+        tabs.addTab("Active Scanner", settingsPanel.activeScannerTabComponent())
+        return tabs
+    }
+
+    private fun styleTabs(tabs: JTabbedPane) {
+        tabs.font = UiTheme.Typography.body
+        tabs.background = UiTheme.Colors.surface
+        tabs.foreground = UiTheme.Colors.onSurface
+        tabs.border = LineBorder(UiTheme.Colors.outlineVariant, 1, true)
+        tabs.isOpaque = true
     }
 
     private fun buildFooter(): JComponent {
@@ -138,23 +115,5 @@ class BottomTabsPanel(private val settingsPanel: SettingsPanel) {
         buttonPanel.add(restoreButton)
         buttonPanel.add(saveButton)
         return buttonPanel
-    }
-
-    private class NavRenderer : DefaultListCellRenderer() {
-        override fun getListCellRendererComponent(
-            list: JList<*>,
-            value: Any?,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean
-        ): Component {
-            val label = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus) as JLabel
-            label.border = EmptyBorder(10, 12, 10, 12)
-            label.horizontalAlignment = SwingConstants.LEFT
-            label.font = UiTheme.Typography.body
-            label.background = if (isSelected) UiTheme.Colors.outlineVariant else UiTheme.Colors.surface
-            label.foreground = if (isSelected) UiTheme.Colors.onSurface else UiTheme.Colors.onSurfaceVariant
-            return label
-        }
     }
 }

@@ -34,20 +34,20 @@ object UiActions {
         if (targets.isEmpty()) return emptyList()
 
         // AI Vulnerability Scan option (Passive)
-        val aiScan = JMenuItem("🔍 AI Passive Scan (${targets.size})")
+        val aiScan = JMenuItem("\uD83D\uDD0D AI Passive Scan (${targets.size})")
         aiScan.addActionListener {
             if (!ensureMcpRunning(tab, mcpSupervisor)) return@addActionListener
             val count = passiveAiScanner.manualScan(targets)
             JOptionPane.showMessageDialog(
                 tab.root,
-                "Queued $count request(s) for AI passive analysis.\n\nFindings will appear in Target → Issues with [AI] prefix.",
+                "Queued $count request(s) for AI passive analysis.\n\nFindings will appear in Target -> Issues with [AI] prefix.",
                 "AI Passive Scan Started",
                 JOptionPane.INFORMATION_MESSAGE
             )
         }
         
         // AI Active Scan option
-        val aiActiveScan = JMenuItem("⚡ AI Active Scan (${targets.size})")
+        val aiActiveScan = JMenuItem("\u26A1 AI Active Scan (${targets.size})")
         aiActiveScan.addActionListener {
             if (!ensureActiveScannerEnabled(tab, activeAiScanner)) return@addActionListener
             val scanner = activeAiScanner ?: return@addActionListener
@@ -56,8 +56,8 @@ object UiActions {
             JOptionPane.showMessageDialog(
                 tab.root,
                 "Queued $count target(s) for AI active testing.\n\n" +
-                "⚠️ This will send test payloads to the server.\n" +
-                "Confirmed findings will appear in Target → Issues with [AI] Confirmed prefix.",
+                "Warning: this will send test payloads to the server.\n" +
+                "Confirmed findings will appear in Target -> Issues with [AI] Confirmed prefix.",
                 "AI Active Scan Started",
                 JOptionPane.INFORMATION_MESSAGE
             )
@@ -163,7 +163,7 @@ object UiActions {
         tab: MainTab,
         mcpSupervisor: McpSupervisor
     ): List<JMenuItem> {
-        val issues = event.selectedIssues() //  [oai_citation:6‡portswigger.github.io](https://portswigger.github.io/burp-extensions-montoya-api/javadoc/burp/api/montoya/ui/contextmenu/AuditIssueContextMenuEvent.html)
+        val issues = event.selectedIssues()
         if (issues.isEmpty()) return emptyList()
 
         val analyze = JMenuItem("Analyze this issue")
@@ -234,7 +234,7 @@ object UiActions {
     }
 
     private fun wrapAnalyzeWithBurpAi(vararg items: JMenuItem): List<JMenuItem> {
-        val menu = JMenu("Analyze with BurpAI")
+        val menu = JMenu("\uD83E\uDD16 Analyze with BurpAI")
         items.forEach { menu.add(it) }
         return listOf(menu)
     }
@@ -293,7 +293,7 @@ object UiActions {
         )
 
         for ((label, classes) in definitions) {
-            val item = JMenuItem("⚡ $label (${targets.size})")
+            val item = JMenuItem("\u26A1 $label (${targets.size})")
             item.addActionListener {
                 if (!ensureActiveScannerEnabled(tab, activeAiScanner)) return@addActionListener
                 val scanner = activeAiScanner ?: return@addActionListener
@@ -301,8 +301,8 @@ object UiActions {
                 JOptionPane.showMessageDialog(
                     tab.root,
                     "Queued $count target(s) for AI active testing: $label.\n\n" +
-                        "⚠️ This will send test payloads to the server.\n" +
-                        "Confirmed findings will appear in Target → Issues with [AI] Confirmed prefix.",
+                        "Warning: this will send test payloads to the server.\n" +
+                        "Confirmed findings will appear in Target -> Issues with [AI] Confirmed prefix.",
                     "AI Targeted Test Started",
                     JOptionPane.INFORMATION_MESSAGE
                 )
@@ -313,4 +313,3 @@ object UiActions {
         return menu
     }
 }
-
