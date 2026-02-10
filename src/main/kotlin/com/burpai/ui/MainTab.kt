@@ -694,12 +694,14 @@ class MainTab(
 
     private fun safeSiteMapRequestResponses(): List<HttpRequestResponse>? {
         val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return null
-        return runCatching { siteMap.requestResponses() }.getOrNull()
+        // Materialize to a snapshot inside runCatching because Montoya may return lazy proxies.
+        return runCatching { siteMap.requestResponses().toList() }.getOrNull()
     }
 
     private fun safeSiteMapIssues(): List<AuditIssue> {
         val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return emptyList()
-        return runCatching { siteMap.issues() }.getOrNull().orEmpty()
+        // Materialize to a snapshot inside runCatching because Montoya may return lazy proxies.
+        return runCatching { siteMap.issues().toList() }.getOrNull().orEmpty()
     }
 
     private fun normalizePath(path: String): String {
