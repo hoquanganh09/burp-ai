@@ -2,6 +2,7 @@ package com.burpai.ui
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.http.message.HttpRequestResponse
+import burp.api.montoya.scanner.audit.issues.AuditIssue
 import com.burpai.audit.AuditLogger
 import com.burpai.backends.BackendRegistry
 import com.burpai.config.AgentSettingsRepository
@@ -426,7 +427,11 @@ class MainTab(
 
         thread(name = "BurpAI-SiteMapSummary", isDaemon = true) {
             try {
-                val entries = api.siteMap().requestResponses()
+                val entries = safeSiteMapRequestResponses()
+                if (entries == null) {
+                    finishSiteSummary("Site Map API is unavailable in current Burp context.", isError = true)
+                    return@thread
+                }
                 if (entries.isEmpty()) {
                     finishSiteSummary("Site Map is empty. Browse target traffic first.", isError = true)
                     return@thread
@@ -658,7 +663,7 @@ class MainTab(
                 var high = 0
                 var medium = 0
                 var low = 0
-                api.siteMap().issues().forEach { issue ->
+                safeSiteMapIssues().forEach { issue ->
                     when (issue.severity()?.name?.uppercase(Locale.ROOT)) {
                         "CRITICAL", "HIGH" -> high += 1
                         "MEDIUM" -> medium += 1
@@ -674,12 +679,27 @@ class MainTab(
                     dashboardIssuesLabel.text = "Vulns: High $high | Medium $medium | Low $low"
                     dashboardUpdatedLabel.text = "Updated: $timestamp"
                 }
-            } catch (_: Exception) {
-                // Keep dashboard resilient if Burp APIs are transient.
+            } catch (_: Throwable) {
+                // Keep dashboard resilient if Burp APIs are transient or unavailable.
+                SwingUtilities.invokeLater {
+                    val timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                    dashboardIssuesLabel.text = "Vulns: High 0 | Medium 0 | Low 0"
+                    dashboardUpdatedLabel.text = "Updated: $timestamp"
+                }
             } finally {
                 dashboardRefreshing.set(false)
             }
         }
+    }
+
+    private fun safeSiteMapRequestResponses(): List<HttpRequestResponse>? {
+        val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return null
+        return runCatching { siteMap.requestResponses() }.getOrNull()
+    }
+
+    private fun safeSiteMapIssues(): List<AuditIssue> {
+        val siteMap = runCatching { api.siteMap() }.getOrNull() ?: return emptyList()
+        return runCatching { siteMap.issues() }.getOrNull().orEmpty()
     }
 
     private fun normalizePath(path: String): String {
